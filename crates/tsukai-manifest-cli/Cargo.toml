@@ -1,0 +1,15 @@
+[package]
+name = "tsukai-manifest-cli"
+version = "0.1.0"
+description = "CLI for validating and inspecting tsukai manifests"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "tsukai-manifest"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tsukai-manifest = { path = "../tsukai-manifest" }
