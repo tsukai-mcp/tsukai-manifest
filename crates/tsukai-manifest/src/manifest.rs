@@ -21,6 +21,11 @@ use serde::{Deserialize, Serialize};
 /// semantics, error taxonomy, and recommended workflows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Manifest {
+    /// JSON Schema URI for this manifest version (e.g.
+    /// `"https://tsukai.dev/manifest/v1.json"`).
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+
     /// Human-readable tool name (e.g. "mx-kv", "gh").
     pub name: String,
 
@@ -61,6 +66,11 @@ pub struct Manifest {
     pub errors: Vec<ErrorDef>,
 
     /// Command definitions, keyed by command name.
+    ///
+    /// Keys use dot notation for subcommands (e.g. `"pr.view"`,
+    /// `"memory.search"`). This keeps the map flat regardless of nesting
+    /// depth. The bridge reconstructs the command tree from dots when
+    /// generating Tier 0 group projections.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub commands: BTreeMap<String, Command>,
 }
@@ -272,7 +282,7 @@ pub struct Arg {
     pub default: Option<serde_json::Value>,
 
     /// Allowed values for enum-style arguments.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "enum", default, skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
 
     /// Validation constraints (e.g. min/max length, regex pattern).
@@ -332,7 +342,7 @@ pub struct OutputField {
     pub description: Option<String>,
 
     /// Allowed values for enum-style fields.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "enum", default, skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
 }
 
@@ -342,6 +352,7 @@ mod tests {
 
     fn minimal_manifest() -> Manifest {
         Manifest {
+            schema: Some("https://tsukai.dev/manifest/v1.json".to_string()),
             name: "mx-kv".to_string(),
             bin: "mx".to_string(),
             version: Version::new(0, 1, 0),
@@ -490,6 +501,7 @@ mod tests {
     #[test]
     fn minimal_manifest_omits_empty_fields() {
         let manifest = Manifest {
+            schema: None,
             name: "simple".to_string(),
             bin: "simple".to_string(),
             version: Version::new(1, 0, 0),
