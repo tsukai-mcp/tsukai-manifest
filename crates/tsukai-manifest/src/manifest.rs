@@ -32,7 +32,8 @@ pub struct Manifest {
     /// Binary name on disk (e.g. "mx", "gh").
     pub bin: String,
 
-    /// Manifest schema version, following semver.
+    /// Tool version (the version of the CLI being described), following semver.
+    /// The manifest schema version is encoded in the `$schema` URL.
     pub version: Version,
 
     /// One-line description of what this tool does.
@@ -175,8 +176,8 @@ pub struct PathwayStep {
 
     /// Named arguments to pass. Keys are argument names, values are either
     /// literal values or placeholders like `"<KEY>"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub args: BTreeMap<String, String>,
 
     /// Optional human-readable note explaining this step's purpose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,7 +227,9 @@ pub struct Command {
     #[serde(default)]
     pub mutating: bool,
 
-    /// Whether this command is irreversible or dangerous. Implies `mutating`.
+    /// Whether this command is irreversible or dangerous.
+    /// Implies `mutating: true` — the validation layer (issue #5) enforces
+    /// this invariant: `destructive: true, mutating: false` is invalid.
     #[serde(default)]
     pub destructive: bool,
 
@@ -316,15 +319,23 @@ pub struct Flag {
 ///
 /// Agents need to know the return structure before calling a command so they
 /// can plan how to parse and use the result.
+///
+/// When `output_type` is `"object"`, `fields` describes the object's
+/// properties. When `"array"`, `items` describes the schema of each
+/// element (which itself can have `fields` if items are objects).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct OutputSchema {
     /// Top-level output type (e.g. "object", "array").
     #[serde(rename = "type")]
     pub output_type: String,
 
-    /// Fields within the output.
+    /// Fields within the output (used when `output_type` is `"object"`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<OutputField>,
+
+    /// For array types, the schema of each item in the array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<Box<OutputSchema>>,
 }
 
 /// A single field within an output schema.
@@ -390,12 +401,12 @@ mod tests {
                 steps: vec![
                     PathwayStep {
                         command: "keys".to_string(),
-                        args: None,
+                        args: BTreeMap::new(),
                         note: Some("List all defined keys with types".to_string()),
                     },
                     PathwayStep {
                         command: "get".to_string(),
-                        args: Some(BTreeMap::from([("key".to_string(), "<KEY>".to_string())])),
+                        args: BTreeMap::from([("key".to_string(), "<KEY>".to_string())]),
                         note: Some("Get current value".to_string()),
                     },
                 ],
@@ -483,6 +494,7 @@ mod tests {
                                 enum_values: None,
                             },
                         ],
+                        items: None,
                     }),
                     errors: vec!["not_found".to_string(), "connection".to_string()],
                 },
@@ -563,5 +575,104 @@ mod tests {
         assert!(cmd.prerequisites.is_empty());
         assert!(cmd.output.is_none());
         assert!(cmd.errors.is_empty());
+    }
+
+    /// Verify that the exact JSON from ARCHITECTURE.md (the `commands.get`
+    /// example) deserializes into the Rust types without modification.
+    /// This catches any mismatch between what the spec says and what the
+    /// types accept.
+    #[test]
+    fn deserialize_architecture_example() {
+        // Exact JSON from ARCHITECTURE.md lines 153-187 — the commands.get example.
+        let json = r#"{
+  "commands": {
+    "get": {
+      "description": "Get the current value of a key",
+      "agent_description": "Optional override for AI-facing description",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "non_interactive_alternative": null,
+
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name"}
+      ],
+
+      "flags": [
+        {"name": "--id", "type": "string", "required": false, "description": "Entry ID or range"},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON"}
+      ],
+
+      "prerequisites": [],
+
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string"},
+          {"name": "type", "type": "string", "enum": ["string", "counter", "list", "history", "state"]},
+          {"name": "value", "type": "any", "description": "Current value"}
+        ]
+      },
+
+      "errors": ["not_found", "connection"]
+    }
+  }
+}"#;
+
+        // Wrap in a minimal valid manifest
+        let full_json = format!(
+            r#"{{
+  "$schema": "https://tsukai.dev/manifest/v1.json",
+  "name": "mx-kv",
+  "bin": "mx",
+  "version": "0.1.0",
+  "description": "Key-value store",
+  {commands}
+}}"#,
+            commands = &json.trim()[1..json.trim().len() - 1]
+        );
+
+        let manifest: Manifest =
+            serde_json::from_str(&full_json).expect("architecture doc JSON must deserialize");
+
+        let cmd = manifest
+            .commands
+            .get("get")
+            .expect("'get' command must exist");
+
+        assert_eq!(cmd.description, "Get the current value of a key");
+        assert_eq!(
+            cmd.agent_description.as_deref(),
+            Some("Optional override for AI-facing description")
+        );
+        assert!(!cmd.mutating);
+        assert!(!cmd.destructive);
+        assert!(!cmd.interactive);
+        assert!(cmd.non_interactive_alternative.is_none());
+        assert_eq!(cmd.args.len(), 1);
+        assert_eq!(cmd.args[0].name, "key");
+        assert!(cmd.args[0].required);
+        assert_eq!(cmd.flags.len(), 2);
+        assert_eq!(cmd.prerequisites.len(), 0);
+
+        let output = cmd.output.as_ref().expect("output must exist");
+        assert_eq!(output.output_type, "object");
+        assert_eq!(output.fields.len(), 3);
+
+        // The doc uses "enum" — verify our serde rename handles it
+        let type_field = &output.fields[1];
+        assert_eq!(type_field.name, "type");
+        assert_eq!(
+            type_field.enum_values,
+            Some(vec![
+                "string".to_string(),
+                "counter".to_string(),
+                "list".to_string(),
+                "history".to_string(),
+                "state".to_string(),
+            ])
+        );
+
+        assert_eq!(cmd.errors, vec!["not_found", "connection"]);
     }
 }
