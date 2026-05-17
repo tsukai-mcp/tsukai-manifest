@@ -14,3 +14,4 @@ pub use manifest::{
     AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Flag, Manifest, OutputField,
     OutputSchema, Pathway, PathwayStep, Tiers,
 };
+pub use schema::{SCHEMA_ID, generate_manifest_schema, generate_manifest_schema_string};
