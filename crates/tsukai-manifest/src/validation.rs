@@ -157,11 +157,18 @@ fn validate_tier_overlap(manifest: &Manifest, result: &mut ValidationResult) {
         for (i, cmd_name) in commands.iter().enumerate() {
             if !seen.insert(cmd_name.as_str()) {
                 let other_tier = seen_in_tier[cmd_name.as_str()];
+                let message = if other_tier == *tier_name {
+                    format!(
+                        "command \"{cmd_name}\" is listed more than once in the \"{tier_name}\" tier"
+                    )
+                } else {
+                    format!(
+                        "command \"{cmd_name}\" appears in both \"{other_tier}\" and \"{tier_name}\" tiers"
+                    )
+                };
                 result.errors.push(ValidationError {
                     path: format!("tiers.{tier_name}[{i}]"),
-                    message: format!(
-                        "command \"{cmd_name}\" appears in both \"{other_tier}\" and \"{tier_name}\" tiers"
-                    ),
+                    message,
                 });
             } else {
                 seen_in_tier.insert(cmd_name.as_str(), tier_name);
@@ -193,7 +200,12 @@ fn validate_error_references(manifest: &Manifest, result: &mut ValidationResult)
 fn validate_prerequisite_references(manifest: &Manifest, result: &mut ValidationResult) {
     for (cmd_name, cmd) in &manifest.commands {
         for (i, prereq) in cmd.prerequisites.iter().enumerate() {
-            if !manifest.commands.contains_key(prereq) {
+            if prereq == cmd_name {
+                result.errors.push(ValidationError {
+                    path: format!("commands.{cmd_name}.prerequisites[{i}]"),
+                    message: format!("command \"{cmd_name}\" lists itself as a prerequisite"),
+                });
+            } else if !manifest.commands.contains_key(prereq) {
                 result.errors.push(ValidationError {
                     path: format!("commands.{cmd_name}.prerequisites[{i}]"),
                     message: format!("prerequisite \"{prereq}\" does not exist in commands"),
@@ -786,6 +798,69 @@ mod tests {
         };
         assert!(!err_only.is_valid());
         assert!(!err_only.has_warnings());
+    }
+
+    // ── Rule 2 addendum: within-tier duplicates ──────────────────────
+
+    #[test]
+    fn command_duplicated_within_same_tier_is_error() {
+        let mut m = valid_manifest();
+        m.tiers.as_mut().unwrap().core.push("get".to_string());
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path.contains("tiers.core"))
+            .unwrap();
+        assert!(
+            err.message.contains("listed more than once"),
+            "within-tier duplicate should say 'listed more than once', got: {}",
+            err.message
+        );
+    }
+
+    // ── Rule 4 addendum: self-referencing prerequisites ─────────────
+
+    #[test]
+    fn self_referencing_prerequisite_is_error() {
+        let mut m = valid_manifest();
+        m.commands
+            .get_mut("get")
+            .unwrap()
+            .prerequisites
+            .push("get".to_string());
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path.contains("commands.get.prerequisites"))
+            .unwrap();
+        assert!(err.message.contains("itself"));
+    }
+
+    // ── Rule 8 addendum: case sensitivity ───────────────────────────
+
+    #[test]
+    fn arg_names_are_case_sensitive() {
+        let mut m = valid_manifest();
+        let cmd = m.commands.get_mut("get").unwrap();
+        // "key" already exists; "Key" is a different name
+        cmd.args.push(Arg {
+            name: "Key".to_string(),
+            arg_type: "string".to_string(),
+            required: false,
+            description: "Different case".to_string(),
+            default: None,
+            enum_values: None,
+            constraints: None,
+        });
+        let result = validate(&m);
+        assert!(
+            result.is_valid(),
+            "\"key\" and \"Key\" should be treated as distinct names, got: {result}"
+        );
     }
 
     // ── Multiple violations at once ──────────────────────────────────
