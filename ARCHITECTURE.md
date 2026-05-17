@@ -57,7 +57,7 @@ This solves the fundamental tension: the manifest must be **complete** enough fo
 
 ```json
 {
-  "$schema": "https://tsukai.dev/manifest/v1.json",
+  "$schema": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
   "name": "tool-name",
   "bin": "binary-name",
   "version": "0.1.0",
