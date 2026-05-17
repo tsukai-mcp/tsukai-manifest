@@ -1,0 +1,17 @@
+[package]
+name = "tsukai-manifest"
+version = "0.1.0"
+description = "Structured CLI manifest format for AI agent consumption via MCP"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
