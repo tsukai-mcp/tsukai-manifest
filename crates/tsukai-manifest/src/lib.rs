@@ -9,3 +9,8 @@ pub mod manifest;
 pub mod projection;
 pub mod schema;
 pub mod validation;
+
+pub use manifest::{
+    AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Flag, Manifest, OutputField,
+    OutputSchema, Pathway, PathwayStep, Tiers,
+};

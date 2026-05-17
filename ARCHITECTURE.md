@@ -149,6 +149,9 @@ Pathways encode expert knowledge. Instead of the agent discovering through trial
 
 ### `commands` — Command Definitions
 
+**Command Naming Convention:**
+Keys use dot notation for subcommands: `"pr.view"`, `"memory.search"`, `"auth.login.web"`. The map stays flat regardless of nesting depth. The bridge reconstructs command groups from dot-separated prefixes when generating Tier 0 projections.
+
 ```json
 {
   "commands": {
