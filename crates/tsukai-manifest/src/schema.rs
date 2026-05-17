@@ -211,14 +211,26 @@ mod tests {
     #[test]
     fn schema_represents_recursive_output_items() {
         let schema = generate_manifest_schema();
-        let schema_str = serde_json::to_string_pretty(&schema).expect("serialize");
+        let defs = schema
+            .get("$defs")
+            .and_then(|v| v.as_object())
+            .expect("$defs");
 
-        // OutputSchema has a recursive `items: Option<Box<OutputSchema>>` field.
-        // The schema must represent this — look for OutputSchema in $defs
-        // with an "items" property that references itself.
+        // OutputSchema must exist in $defs
+        let output_schema = defs
+            .get("OutputSchema")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("OutputSchema properties");
+
+        // It must have an "items" property that references itself via $ref
+        let items = output_schema
+            .get("items")
+            .expect("OutputSchema must have 'items' property");
+        let items_str = serde_json::to_string(items).expect("serialize items");
         assert!(
-            schema_str.contains("OutputSchema"),
-            "Schema should reference OutputSchema in definitions"
+            items_str.contains("#/$defs/OutputSchema"),
+            "OutputSchema.items must self-reference via $ref, got: {items_str}"
         );
     }
 }
