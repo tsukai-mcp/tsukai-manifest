@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 /// CLI for validating and inspecting tsukai manifests.
@@ -13,7 +15,7 @@ enum Commands {
     /// Validate a tsukai manifest file
     Validate {
         /// Path to the manifest file
-        path: String,
+        path: PathBuf,
     },
 }
 
@@ -22,7 +24,7 @@ fn main() {
 
     match cli.command {
         Commands::Validate { path } => {
-            eprintln!("validate: not yet implemented (path: {path})");
+            eprintln!("validate: not yet implemented (path: {})", path.display());
             std::process::exit(1);
         }
     }
