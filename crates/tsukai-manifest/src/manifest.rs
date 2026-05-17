@@ -19,6 +19,14 @@ use serde::{Deserialize, Serialize};
 /// tsukai bridge reads to generate MCP tool definitions. It contains everything
 /// needed to understand a tool's commands, arguments, output shapes, mutation
 /// semantics, error taxonomy, and recommended workflows.
+///
+/// # Forward Compatibility
+///
+/// This struct intentionally does **not** use `#[serde(deny_unknown_fields)]`.
+/// Older parsers reading a newer manifest version will silently ignore fields
+/// they don't recognize rather than failing to deserialize. This is a deliberate
+/// design choice — not an omission — so that manifest authors can adopt new
+/// schema features without breaking consumers that haven't upgraded yet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Manifest {
     /// JSON Schema URI for this manifest version (e.g.
@@ -674,5 +682,35 @@ mod tests {
         );
 
         assert_eq!(cmd.errors, vec!["not_found", "connection"]);
+    }
+
+    #[test]
+    fn array_output_schema_round_trip() {
+        let schema = OutputSchema {
+            output_type: "array".to_string(),
+            fields: vec![],
+            items: Some(Box::new(OutputSchema {
+                output_type: "object".to_string(),
+                fields: vec![
+                    OutputField {
+                        name: "id".to_string(),
+                        field_type: "string".to_string(),
+                        description: Some("Entry identifier".to_string()),
+                        enum_values: None,
+                    },
+                    OutputField {
+                        name: "value".to_string(),
+                        field_type: "any".to_string(),
+                        description: None,
+                        enum_values: None,
+                    },
+                ],
+                items: None,
+            })),
+        };
+
+        let json = serde_json::to_string_pretty(&schema).expect("serialize");
+        let deserialized: OutputSchema = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(schema, deserialized);
     }
 }
