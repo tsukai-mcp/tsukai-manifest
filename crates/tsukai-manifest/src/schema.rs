@@ -105,28 +105,93 @@ mod tests {
     #[test]
     fn schema_handles_type_renames() {
         let schema = generate_manifest_schema();
-        let schema_str = serde_json::to_string(&schema).expect("serialize");
+        let defs = schema
+            .get("$defs")
+            .and_then(|v| v.as_object())
+            .expect("$defs");
 
-        // Arg.arg_type is renamed to "type" via serde
-        // OutputField.field_type is renamed to "type" via serde
-        // OutputSchema.output_type is renamed to "type" via serde
-        // These should appear as property names in their respective $defs
+        // Check Arg has "type" property, not "arg_type"
+        let arg_props = defs
+            .get("Arg")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("Arg properties");
         assert!(
-            schema_str.contains(r#""type""#),
-            "Serde renames to 'type' must be reflected in schema"
+            arg_props.contains_key("type"),
+            "Arg must have 'type' property (renamed from arg_type)"
+        );
+        assert!(
+            !arg_props.contains_key("arg_type"),
+            "Arg must not have bare 'arg_type'"
+        );
+
+        // Check Flag has "type" property, not "flag_type"
+        let flag_props = defs
+            .get("Flag")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("Flag properties");
+        assert!(
+            flag_props.contains_key("type"),
+            "Flag must have 'type' property (renamed from flag_type)"
+        );
+        assert!(
+            !flag_props.contains_key("flag_type"),
+            "Flag must not have bare 'flag_type'"
+        );
+
+        // Check OutputSchema has "type" property, not "output_type"
+        let output_props = defs
+            .get("OutputSchema")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("OutputSchema properties");
+        assert!(
+            output_props.contains_key("type"),
+            "OutputSchema must have 'type' property (renamed from output_type)"
+        );
+        assert!(
+            !output_props.contains_key("output_type"),
+            "OutputSchema must not have bare 'output_type'"
         );
     }
 
     #[test]
     fn schema_handles_enum_renames() {
         let schema = generate_manifest_schema();
-        let schema_str = serde_json::to_string(&schema).expect("serialize");
+        let defs = schema
+            .get("$defs")
+            .and_then(|v| v.as_object())
+            .expect("$defs");
 
-        // Arg.enum_values is renamed to "enum" via serde
-        // OutputField.enum_values is renamed to "enum" via serde
+        // Check Arg has "enum" property, not "enum_values"
+        let arg_props = defs
+            .get("Arg")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("Arg properties");
         assert!(
-            schema_str.contains(r#""enum""#),
-            "Serde renames to 'enum' must be reflected in schema"
+            arg_props.contains_key("enum"),
+            "Arg must have 'enum' property (renamed from enum_values)"
+        );
+        assert!(
+            !arg_props.contains_key("enum_values"),
+            "Arg must not have bare 'enum_values'"
+        );
+
+        // Check OutputField has "enum" property, not "enum_values"
+        let field_props = defs
+            .get("OutputField")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("OutputField properties");
+        assert!(
+            field_props.contains_key("enum"),
+            "OutputField must have 'enum' property (renamed from enum_values)"
+        );
+        assert!(
+            !field_props.contains_key("enum_values"),
+            "OutputField must not have bare 'enum_values'"
         );
     }
 
