@@ -1,0 +1,504 @@
+{
+  "$defs": {
+    "AgentConfig": {
+      "description": "Agent integration configuration.\n\nDescribes how the tool can adapt its output for AI agents — which output\nmodes it supports, what flag enables machine-readable output, and any\nenvironment variables the tool recognizes for agent-aware behavior.",
+      "properties": {
+        "default_output_flag": {
+          "description": "Default flag to get machine-readable output (e.g. `\"--json\"`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env_vars": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables the tool recognizes for agent behavior.\nKeys are var names, values are descriptions of what setting them does.",
+          "type": "object"
+        },
+        "output_modes": {
+          "description": "Supported output modes (e.g. `[\"json\"]`, `[\"json\", \"csv\"]`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Arg": {
+      "description": "A command argument (positional or named).",
+      "properties": {
+        "constraints": {
+          "description": "Validation constraints (e.g. min/max length, regex pattern)."
+        },
+        "default": {
+          "description": "Default value when not provided, serialized as a JSON value."
+        },
+        "description": {
+          "description": "Human-readable description.",
+          "type": "string"
+        },
+        "enum": {
+          "description": "Allowed values for enum-style arguments.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Argument name.",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "description": "Whether this argument is required.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "Value type (e.g. \"string\", \"integer\", \"boolean\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "type": "object"
+    },
+    "Command": {
+      "description": "A single CLI command definition.\n\nContains everything the bridge needs to generate a correct MCP tool:\nwhat the command does, what it takes, what it returns, whether it's safe,\nand what can go wrong.",
+      "properties": {
+        "agent_description": {
+          "description": "Optional AI-facing description override. When present, the bridge\nuses this in tool definitions instead of `description`. Useful when\nthe agent needs different context than a human.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": {
+          "description": "Positional and named arguments this command accepts.",
+          "items": {
+            "$ref": "#/$defs/Arg"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Human-readable description of what this command does.",
+          "type": "string"
+        },
+        "destructive": {
+          "default": false,
+          "description": "Whether this command is irreversible or dangerous.\nImplies `mutating: true` — the validation layer (issue #5) enforces\nthis invariant: `destructive: true, mutating: false` is invalid.",
+          "type": "boolean"
+        },
+        "errors": {
+          "description": "Error kinds this command can produce (references global error `kind`s).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "flags": {
+          "description": "Flags (options) this command accepts.",
+          "items": {
+            "$ref": "#/$defs/Flag"
+          },
+          "type": "array"
+        },
+        "interactive": {
+          "default": false,
+          "description": "Whether this command requires interactive input (TTY, browser, etc.).",
+          "type": "boolean"
+        },
+        "mutating": {
+          "default": false,
+          "description": "Whether this command changes state. `false` means read-only and\nsafe to call speculatively.",
+          "type": "boolean"
+        },
+        "non_interactive_alternative": {
+          "description": "If `interactive` is true, an alternative invocation that works\nnon-interactively (e.g. `\"gh auth login --with-token < token_file\"`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Schema describing the command's output shape."
+        },
+        "prerequisites": {
+          "description": "Commands or conditions that must be satisfied before invoking.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "type": "object"
+    },
+    "ContextRequirements": {
+      "description": "Runtime context requirements.\n\nHints about what the runtime environment must provide for this tool to\nfunction. The bridge can use these to skip tools that won't work in the\ncurrent context (e.g. offline, no git repo).",
+      "properties": {
+        "requires_auth": {
+          "default": false,
+          "description": "Whether the tool requires authentication to be set up first.",
+          "type": "boolean"
+        },
+        "requires_elevated": {
+          "default": false,
+          "description": "Whether the tool requires elevated/root permissions.",
+          "type": "boolean"
+        },
+        "requires_git_repo": {
+          "default": false,
+          "description": "Whether the tool must be run inside a git repository.",
+          "type": "boolean"
+        },
+        "requires_network": {
+          "default": false,
+          "description": "Whether the tool requires network access.",
+          "type": "boolean"
+        },
+        "typical_environment": {
+          "description": "Free-form description of the typical environment (e.g. \"any\", \"ci\",\n\"developer workstation\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ErrorDef": {
+      "description": "A global error definition.\n\nErrors are defined at the manifest level and referenced by kind from\nindividual commands. This avoids repeating the same error descriptions\nacross commands and gives agents a consistent error taxonomy.",
+      "properties": {
+        "description": {
+          "description": "Human-readable description of the error condition.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Error kind identifier (e.g. \"not_found\", \"auth_required\").",
+          "type": "string"
+        },
+        "resolution": {
+          "description": "Suggested resolution (e.g. \"Run 'tool auth login' first\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retryable": {
+          "default": false,
+          "description": "Whether this error is transient and worth retrying.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "type": "object"
+    },
+    "Flag": {
+      "description": "A command flag (option).",
+      "properties": {
+        "default": {
+          "description": "Default value when not provided, serialized as a JSON value."
+        },
+        "description": {
+          "description": "Human-readable description.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Flag name including prefix (e.g. \"--json\", \"--id\").",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "description": "Whether this flag is required.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "Value type (e.g. \"string\", \"boolean\", \"integer\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "type": "object"
+    },
+    "OutputField": {
+      "description": "A single field within an output schema.",
+      "properties": {
+        "description": {
+          "description": "Human-readable description of this field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enum": {
+          "description": "Allowed values for enum-style fields.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Field name.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Field type (e.g. \"string\", \"integer\", \"any\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "OutputSchema": {
+      "description": "Schema describing a command's output shape.\n\nAgents need to know the return structure before calling a command so they\ncan plan how to parse and use the result.\n\nWhen `output_type` is `\"object\"`, `fields` describes the object's\nproperties. When `\"array\"`, `items` describes the schema of each\nelement (which itself can have `fields` if items are objects).",
+      "properties": {
+        "fields": {
+          "description": "Fields within the output (used when `output_type` is `\"object\"`).",
+          "items": {
+            "$ref": "#/$defs/OutputField"
+          },
+          "type": "array"
+        },
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For array types, the schema of each item in the array."
+        },
+        "type": {
+          "description": "Top-level output type (e.g. \"object\", \"array\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "Pathway": {
+      "description": "A common workflow encoded as a sequence of steps.\n\nPathways capture expert knowledge about how to accomplish a task with the\ntool. Instead of the agent discovering through trial and error, the\nmanifest declares the optimal sequence.",
+      "properties": {
+        "description": {
+          "description": "Human-readable description of what this pathway accomplishes.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Pathway identifier (e.g. \"check-state\", \"create-and-push\").",
+          "type": "string"
+        },
+        "prerequisites": {
+          "description": "Commands or conditions that must be satisfied before starting.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "description": "Ordered steps to execute.",
+          "items": {
+            "$ref": "#/$defs/PathwayStep"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "PathwayStep": {
+      "description": "A single step within a pathway.",
+      "properties": {
+        "args": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Named arguments to pass. Keys are argument names, values are either\nliteral values or placeholders like `\"<KEY>\"`.",
+          "type": "object"
+        },
+        "command": {
+          "description": "Command name to invoke (must exist in the manifest's `commands` map).",
+          "type": "string"
+        },
+        "note": {
+          "description": "Optional human-readable note explaining this step's purpose.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "SemVer": {
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "type": "string"
+    },
+    "Tiers": {
+      "description": "Deferred loading tiers.\n\nThe bridge uses these to decide which commands to include at each\nprojection tier. `core` commands are loaded when the agent engages with\nthe tool, `common` commands are available but not pre-loaded, and\n`extended` commands are loaded only on demand.",
+      "properties": {
+        "common": {
+          "description": "Frequently used commands — available but not pre-loaded.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "core": {
+          "description": "Most important commands — loaded at Tier 1.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extended": {
+          "description": "Specialized commands — loaded only on demand (Tier 2).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Top-level manifest describing a CLI tool.\n\nThis is the canonical representation that tool authors write and that the\ntsukai bridge reads to generate MCP tool definitions. It contains everything\nneeded to understand a tool's commands, arguments, output shapes, mutation\nsemantics, error taxonomy, and recommended workflows.\n\n# Forward Compatibility\n\nThis struct intentionally does **not** use `#[serde(deny_unknown_fields)]`.\nOlder parsers reading a newer manifest version will silently ignore fields\nthey don't recognize rather than failing to deserialize. This is a deliberate\ndesign choice — not an omission — so that manifest authors can adopt new\nschema features without breaking consumers that haven't upgraded yet.",
+  "properties": {
+    "$schema": {
+      "description": "JSON Schema URI for this manifest version (e.g.\n`\"https://tsukai.yaoyorozu.industries/manifest/v1.json\"`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Agent integration configuration (output modes, env vars)."
+    },
+    "base_command": {
+      "description": "Base command prefix. For tools invoked as `binary subcommand` (e.g.\n`mx kv`), this holds the full prefix so individual command entries\nonly need to specify the leaf name.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "bin": {
+      "description": "Binary name on disk (e.g. \"mx\", \"gh\").",
+      "type": "string"
+    },
+    "commands": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Command"
+      },
+      "description": "Command definitions, keyed by command name.\n\nKeys use dot notation for subcommands (e.g. `\"pr.view\"`,\n`\"memory.search\"`). This keeps the map flat regardless of nesting\ndepth. The bridge reconstructs the command tree from dots when\ngenerating Tier 0 group projections.",
+      "type": "object"
+    },
+    "context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContextRequirements"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Runtime context requirements (network, auth, git repo, etc.)."
+    },
+    "description": {
+      "description": "One-line description of what this tool does.",
+      "type": "string"
+    },
+    "errors": {
+      "description": "Global error taxonomy. Individual commands reference these by `kind`.",
+      "items": {
+        "$ref": "#/$defs/ErrorDef"
+      },
+      "type": "array"
+    },
+    "name": {
+      "description": "Human-readable tool name (e.g. \"mx-kv\", \"gh\").",
+      "type": "string"
+    },
+    "pathways": {
+      "description": "Common workflows encoded as step-by-step pathways.",
+      "items": {
+        "$ref": "#/$defs/Pathway"
+      },
+      "type": "array"
+    },
+    "tiers": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Tiers"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Deferred loading tiers — which commands belong to core, common, or\nextended tiers for the bridge's context budget management."
+    },
+    "version": {
+      "$ref": "#/$defs/SemVer",
+      "description": "Tool version (the version of the CLI being described), following semver.\nThe manifest schema version is encoded in the `$schema` URL."
+    }
+  },
+  "required": [
+    "name",
+    "bin",
+    "version",
+    "description"
+  ],
+  "title": "Manifest",
+  "type": "object"
+}
