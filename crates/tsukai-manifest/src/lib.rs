@@ -15,3 +15,4 @@ pub use manifest::{
     OutputSchema, Pathway, PathwayStep, Tiers,
 };
 pub use schema::{SCHEMA_ID, generate_manifest_schema, generate_manifest_schema_string};
+pub use validation::{ValidationError, ValidationResult, ValidationWarning, validate};
