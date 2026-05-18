@@ -675,3 +675,137 @@ fn tier1_token_budget() {
         json.len()
     );
 }
+
+// =========================================================================
+// Empty manifest tests (S2)
+// =========================================================================
+
+/// Helper: build a completely empty manifest (no commands, no pathways,
+/// no agent config).
+fn empty_manifest() -> Manifest {
+    Manifest {
+        schema: None,
+        name: "empty".to_string(),
+        bin: "empty".to_string(),
+        version: semver::Version::new(0, 0, 0),
+        description: "An empty manifest".to_string(),
+        base_command: vec![],
+        agent: None,
+        context: None,
+        tiers: None,
+        pathways: vec![],
+        errors: vec![],
+        commands: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn tier0_empty_manifest() {
+    let manifest = empty_manifest();
+    let t0 = project_tier0(&manifest);
+
+    assert_eq!(t0.tool, "empty");
+    assert!(t0.groups.is_empty());
+    assert!(t0.commands.is_empty());
+    assert!(t0.interactive_commands.is_empty());
+    assert!(t0.agent_output.is_none());
+    assert!(t0.pathways.is_empty());
+}
+
+#[test]
+fn tier1_empty_manifest() {
+    let manifest = empty_manifest();
+    let t1 = project_tier1(&manifest);
+
+    assert!(t1.commands.is_empty(), "no tiers defined should produce empty commands map");
+    assert!(t1.pathways.is_empty());
+    assert!(t1.errors.is_empty());
+}
+
+#[test]
+fn tier2_empty_manifest() {
+    let manifest = empty_manifest();
+    assert!(
+        project_tier2_command(&manifest, "anything").is_none(),
+        "empty manifest should return None for any command"
+    );
+}
+
+// =========================================================================
+// Tier 2 unresolved error fallback test (C2)
+// =========================================================================
+
+#[test]
+fn tier2_unresolved_error_produces_fallback() {
+    let mut manifest = rich_manifest();
+
+    // Add a command that references an error kind not in the global taxonomy
+    manifest.commands.insert(
+        "quirky".to_string(),
+        Command {
+            description: "A quirky command".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![],
+            prerequisites: vec![],
+            output: None,
+            errors: vec![
+                "not_found".to_string(),
+                "totally_unknown".to_string(),
+            ],
+        },
+    );
+
+    let t2 = project_tier2_command(&manifest, "quirky").expect("quirky must exist");
+
+    // Should have both errors -- the known one resolved, the unknown one as fallback
+    assert_eq!(t2.errors.len(), 2);
+
+    let resolved = &t2.errors[0];
+    assert_eq!(resolved.kind, "not_found");
+    assert!(!resolved.description.is_empty());
+
+    let fallback = &t2.errors[1];
+    assert_eq!(fallback.kind, "totally_unknown");
+    assert!(!fallback.retryable);
+    assert!(fallback.description.is_empty());
+    assert!(fallback.resolution.is_none());
+}
+
+// =========================================================================
+// Multi-level dot notation test (W4)
+// =========================================================================
+
+#[test]
+fn tier0_multi_level_dot_notation() {
+    let mut manifest = empty_manifest();
+    manifest.commands.insert(
+        "auth.login.web".to_string(),
+        Command {
+            description: "Web-based login".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: true,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![],
+            prerequisites: vec![],
+            output: None,
+            errors: vec![],
+        },
+    );
+
+    let t0 = project_tier0(&manifest);
+
+    // Should group under "auth" with leaf "login.web"
+    let auth_group = t0.groups.get("auth").expect("auth group must exist");
+    assert_eq!(auth_group.commands, vec!["login.web".to_string()]);
+
+    // Should NOT appear in top-level commands
+    assert!(!t0.commands.contains(&"auth.login.web".to_string()));
+}

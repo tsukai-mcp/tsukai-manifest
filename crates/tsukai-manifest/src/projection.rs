@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::manifest::{Command, Manifest, OutputSchema};
 
@@ -19,7 +19,7 @@ use crate::manifest::{Command, Manifest, OutputSchema};
 // ---------------------------------------------------------------------------
 
 /// High-level tool overview for discovery (~150-300 tokens).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tier0 {
     /// Tool name from the manifest.
     pub tool: String,
@@ -28,20 +28,27 @@ pub struct Tier0 {
     /// Command groups inferred from dot-notation keys.
     pub groups: BTreeMap<String, CommandGroupSummary>,
     /// Top-level commands (no dots in the key).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<String>,
     /// Commands where `interactive == true`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interactive_commands: Vec<String>,
     /// The `agent.default_output_flag` value, if any.
     pub agent_output: Option<String>,
     /// Pathway names only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pathways: Vec<String>,
 }
 
 /// Summary of commands within a dot-notation group.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandGroupSummary {
     /// Leaf command names within this group.
     pub commands: Vec<String>,
+    /// Group description. Will be populated when the manifest schema gains
+    /// explicit group metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +56,7 @@ pub struct CommandGroupSummary {
 // ---------------------------------------------------------------------------
 
 /// Core command summaries for engaged usage (~600 tokens).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tier1 {
     /// Tool name from the manifest.
     pub tool: String,
@@ -58,23 +65,25 @@ pub struct Tier1 {
     /// Pathway name to compressed step description.
     pub pathways: BTreeMap<String, String>,
     /// Error kinds with "(retryable)" suffix where applicable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
 }
 
 /// Compact representation of a core command.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreCommandSummary {
     /// Human-readable args string (e.g. `"<KEY> [--id ID]"`).
     pub args: String,
     /// Human-readable return shape (e.g. `"{key, type, value}"`).
     pub returns: String,
     /// `true` when the command is neither mutating nor destructive.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub readonly: bool,
     /// Whether the command mutates state.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mutating: bool,
     /// Whether the command is destructive.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub destructive: bool,
 }
 
@@ -83,7 +92,7 @@ pub struct CoreCommandSummary {
 // ---------------------------------------------------------------------------
 
 /// Full detail for a single command, loaded on demand.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tier2Command {
     /// Command name.
     pub command: String,
@@ -98,6 +107,9 @@ pub struct Tier2Command {
     /// Non-interactive alternative invocation, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_interactive_alternative: Option<String>,
+    /// Commands or conditions that must be satisfied before invoking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prerequisites: Vec<String>,
     /// Positional / named arguments.
     pub args: Vec<Tier2Arg>,
     /// Flags / options.
@@ -110,11 +122,12 @@ pub struct Tier2Command {
 }
 
 /// Full argument detail for Tier 2.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tier2Arg {
     /// Argument name.
     pub name: String,
     /// Value type.
+    #[serde(rename = "type")]
     pub arg_type: String,
     /// Whether this argument is required.
     pub required: bool,
@@ -132,11 +145,12 @@ pub struct Tier2Arg {
 }
 
 /// Full flag detail for Tier 2.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tier2Flag {
     /// Flag name (e.g. `"--json"`).
     pub name: String,
     /// Value type.
+    #[serde(rename = "type")]
     pub flag_type: String,
     /// Whether this flag is required.
     pub required: bool,
@@ -148,7 +162,7 @@ pub struct Tier2Flag {
 }
 
 /// Resolved error detail from the global taxonomy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetail {
     /// Error kind identifier.
     pub kind: String,
@@ -194,7 +208,15 @@ pub fn project_tier0(manifest: &Manifest) -> Tier0 {
 
     let groups = groups
         .into_iter()
-        .map(|(name, commands)| (name, CommandGroupSummary { commands }))
+        .map(|(name, commands)| {
+            (
+                name,
+                CommandGroupSummary {
+                    commands,
+                    description: None,
+                },
+            )
+        })
         .collect();
 
     let agent_output = manifest
@@ -230,6 +252,10 @@ pub fn project_tier1(manifest: &Manifest) -> Tier1 {
         }
     }
 
+    // Compress each pathway into a single string of the form
+    // "cmd1 ARG1 ARG2 -> cmd2 ARG1". Note: args appear in BTreeMap key
+    // order (alphabetical), not insertion order, because PathwayStep.args
+    // is a BTreeMap.
     let pathways = manifest
         .pathways
         .iter()
@@ -319,13 +345,21 @@ pub fn project_tier2_command(manifest: &Manifest, command: &str) -> Option<Tier2
     let errors = cmd
         .errors
         .iter()
-        .filter_map(|kind| {
-            error_map.get(kind.as_str()).map(|e| ErrorDetail {
-                kind: e.kind.clone(),
-                retryable: e.retryable,
-                description: e.description.clone(),
-                resolution: e.resolution.clone(),
-            })
+        .map(|kind| {
+            match error_map.get(kind.as_str()) {
+                Some(e) => ErrorDetail {
+                    kind: e.kind.clone(),
+                    retryable: e.retryable,
+                    description: e.description.clone(),
+                    resolution: e.resolution.clone(),
+                },
+                None => ErrorDetail {
+                    kind: kind.clone(),
+                    retryable: false,
+                    description: String::new(),
+                    resolution: None,
+                },
+            }
         })
         .collect();
 
@@ -336,6 +370,7 @@ pub fn project_tier2_command(manifest: &Manifest, command: &str) -> Option<Tier2
         destructive: cmd.destructive,
         interactive: cmd.interactive,
         non_interactive_alternative: cmd.non_interactive_alternative.clone(),
+        prerequisites: cmd.prerequisites.clone(),
         args,
         flags,
         output: cmd.output.clone(),
