@@ -299,6 +299,10 @@ pub fn project_tier1(manifest: &Manifest) -> Tier1 {
 
 /// Project a single command to Tier 2 (full detail).
 ///
+/// Error kinds listed on the command are resolved against the manifest's
+/// global error taxonomy. If a kind is not found in the taxonomy, a fallback
+/// entry is produced with `retryable: false` and an empty description.
+///
 /// Returns `None` if the command does not exist in the manifest.
 pub fn project_tier2_command(manifest: &Manifest, command: &str) -> Option<Tier2Command> {
     let cmd = manifest.commands.get(command)?;

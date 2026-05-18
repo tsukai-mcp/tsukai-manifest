@@ -237,10 +237,10 @@ If `interactive: true` and no `non_interactive_alternative` exists, the agent sh
 {
   "tool": "mx-kv",
   "commands": {
-    "get": {"args": "<KEY> [--id ID]", "returns": "{key, type, value}", "readonly": true},
-    "set": {"args": "<KEY> [VALUE] [--memory KN_ID]", "returns": "{key, value, previous}", "mutating": true},
+    "get": {"args": "<KEY> [--id STRING]", "returns": "{key, type, value}", "readonly": true},
+    "set": {"args": "<KEY> [VALUE] [--memory STRING]", "returns": "{key, value, previous}", "mutating": true},
     "keys": {"args": "", "returns": "[{key, type}]", "readonly": true},
-    "search": {"args": "<KEY> [QUERY] [--where K=V]", "returns": "[{id, value, timestamp}]", "readonly": true}
+    "search": {"args": "<KEY> [QUERY] [--where STRING]", "returns": "[{id, value, timestamp}]", "readonly": true}
   },
   "pathways": {
     "check-state": "keys -> get <KEY>",
