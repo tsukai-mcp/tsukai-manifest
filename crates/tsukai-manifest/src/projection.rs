@@ -19,7 +19,7 @@ use crate::manifest::{Command, Manifest, OutputSchema};
 // ---------------------------------------------------------------------------
 
 /// High-level tool overview for discovery (~150-300 tokens).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tier0 {
     /// Tool name from the manifest.
     pub tool: String,
@@ -41,7 +41,7 @@ pub struct Tier0 {
 }
 
 /// Summary of commands within a dot-notation group.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandGroupSummary {
     /// Leaf command names within this group.
     pub commands: Vec<String>,
@@ -56,13 +56,15 @@ pub struct CommandGroupSummary {
 // ---------------------------------------------------------------------------
 
 /// Core command summaries for engaged usage (~600 tokens).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tier1 {
     /// Tool name from the manifest.
     pub tool: String,
     /// Only commands listed in `tiers.core`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub commands: BTreeMap<String, CoreCommandSummary>,
     /// Pathway name to compressed step description.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pathways: BTreeMap<String, String>,
     /// Error kinds with "(retryable)" suffix where applicable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -70,7 +72,7 @@ pub struct Tier1 {
 }
 
 /// Compact representation of a core command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreCommandSummary {
     /// Human-readable args string (e.g. `"<KEY> [--id ID]"`).
     pub args: String,
@@ -92,7 +94,7 @@ pub struct CoreCommandSummary {
 // ---------------------------------------------------------------------------
 
 /// Full detail for a single command, loaded on demand.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tier2Command {
     /// Command name.
     pub command: String,
@@ -118,11 +120,12 @@ pub struct Tier2Command {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<OutputSchema>,
     /// Resolved error details from the global taxonomy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ErrorDetail>,
 }
 
 /// Full argument detail for Tier 2.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tier2Arg {
     /// Argument name.
     pub name: String,
@@ -145,7 +148,7 @@ pub struct Tier2Arg {
 }
 
 /// Full flag detail for Tier 2.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tier2Flag {
     /// Flag name (e.g. `"--json"`).
     pub name: String,
@@ -162,7 +165,7 @@ pub struct Tier2Flag {
 }
 
 /// Resolved error detail from the global taxonomy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorDetail {
     /// Error kind identifier.
     pub kind: String,
@@ -196,7 +199,10 @@ pub fn project_tier0(manifest: &Manifest) -> Tier0 {
 
     for (key, cmd) in &manifest.commands {
         if let Some((prefix, leaf)) = key.split_once('.') {
-            groups.entry(prefix.to_string()).or_default().push(leaf.to_string());
+            groups
+                .entry(prefix.to_string())
+                .or_default()
+                .push(leaf.to_string());
         } else {
             top_level.push(key.clone());
         }
@@ -349,21 +355,19 @@ pub fn project_tier2_command(manifest: &Manifest, command: &str) -> Option<Tier2
     let errors = cmd
         .errors
         .iter()
-        .map(|kind| {
-            match error_map.get(kind.as_str()) {
-                Some(e) => ErrorDetail {
-                    kind: e.kind.clone(),
-                    retryable: e.retryable,
-                    description: e.description.clone(),
-                    resolution: e.resolution.clone(),
-                },
-                None => ErrorDetail {
-                    kind: kind.clone(),
-                    retryable: false,
-                    description: String::new(),
-                    resolution: None,
-                },
-            }
+        .map(|kind| match error_map.get(kind.as_str()) {
+            Some(e) => ErrorDetail {
+                kind: e.kind.clone(),
+                retryable: e.retryable,
+                description: e.description.clone(),
+                resolution: e.resolution.clone(),
+            },
+            None => ErrorDetail {
+                kind: kind.clone(),
+                retryable: false,
+                description: String::new(),
+                resolution: None,
+            },
         })
         .collect();
 

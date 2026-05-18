@@ -25,11 +25,7 @@ fn rich_manifest() -> Manifest {
         }),
         context: None,
         tiers: Some(Tiers {
-            core: vec![
-                "get".to_string(),
-                "set".to_string(),
-                "pr.view".to_string(),
-            ],
+            core: vec!["get".to_string(), "set".to_string(), "pr.view".to_string()],
             common: vec!["pr.create".to_string(), "issue.list".to_string()],
             extended: vec!["pr.merge".to_string(), "login".to_string()],
         }),
@@ -240,9 +236,7 @@ fn rich_manifest() -> Manifest {
                     mutating: false,
                     destructive: false,
                     interactive: true,
-                    non_interactive_alternative: Some(
-                        "tt login --token <TOKEN>".to_string(),
-                    ),
+                    non_interactive_alternative: Some("tt login --token <TOKEN>".to_string()),
                     args: vec![],
                     flags: vec![],
                     prerequisites: vec![],
@@ -717,7 +711,10 @@ fn tier1_empty_manifest() {
     let manifest = empty_manifest();
     let t1 = project_tier1(&manifest);
 
-    assert!(t1.commands.is_empty(), "no tiers defined should produce empty commands map");
+    assert!(
+        t1.commands.is_empty(),
+        "no tiers defined should produce empty commands map"
+    );
     assert!(t1.pathways.is_empty());
     assert!(t1.errors.is_empty());
 }
@@ -753,10 +750,7 @@ fn tier2_unresolved_error_produces_fallback() {
             flags: vec![],
             prerequisites: vec![],
             output: None,
-            errors: vec![
-                "not_found".to_string(),
-                "totally_unknown".to_string(),
-            ],
+            errors: vec!["not_found".to_string(), "totally_unknown".to_string()],
         },
     );
 
