@@ -646,10 +646,9 @@ fn tier0_token_budget() {
     let json = serde_json::to_string(&t0).expect("serialize tier 0");
     let tokens = estimate_tokens(&json);
 
-    // Budget: ~150-300 tokens. Allow some headroom for the test manifest
-    // which has more commands than a typical single tool.
+    // Budget: ~150-300 tokens (issue #6). Guard the real target.
     assert!(
-        tokens <= 400,
+        tokens <= 300,
         "Tier 0 should be compact; got {tokens} tokens ({} bytes): {json}",
         json.len()
     );
@@ -662,9 +661,10 @@ fn tier1_token_budget() {
     let json = serde_json::to_string(&t1).expect("serialize tier 1");
     let tokens = estimate_tokens(&json);
 
-    // Budget: ~600 tokens. Our test manifest has 3 core commands + pathways + errors.
+    // Budget: ~600 tokens (issue #6). Our test manifest has 3 core commands +
+    // pathways + errors.
     assert!(
-        tokens <= 800,
+        tokens <= 600,
         "Tier 1 should be compact; got {tokens} tokens ({} bytes): {json}",
         json.len()
     );
@@ -802,4 +802,232 @@ fn tier0_multi_level_dot_notation() {
 
     // Should NOT appear in top-level commands
     assert!(!t0.commands.contains(&"auth.login.web".to_string()));
+}
+
+// =========================================================================
+// Tier 1 return rendering (issue #6)
+// =========================================================================
+
+#[test]
+fn tier1_return_rendering_variants() {
+    let mut manifest = rich_manifest();
+
+    // A core command with empty-object output -> "{}".
+    manifest.commands.insert(
+        "ping".to_string(),
+        Command {
+            description: "Ping the service".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![],
+            prerequisites: vec![],
+            output: Some(OutputSchema {
+                output_type: "object".to_string(),
+                fields: vec![],
+                items: None,
+            }),
+            errors: vec![],
+        },
+    );
+
+    // Promote `list` (array-of-object output) and `login` (no output) into the
+    // core tier alongside the new `ping` command.
+    manifest.tiers = Some(Tiers {
+        core: vec![
+            "list".to_string(),
+            "login".to_string(),
+            "ping".to_string(),
+        ],
+        common: vec![],
+        extended: vec![],
+    });
+
+    let t1 = project_tier1(&manifest);
+
+    // Array-of-object output renders as "[{...}]".
+    assert_eq!(t1.commands["list"].returns, "[{key, type}]");
+
+    // No output renders as "(none)".
+    assert_eq!(t1.commands["login"].returns, "(none)");
+
+    // Empty-object output renders as "{}".
+    assert_eq!(t1.commands["ping"].returns, "{}");
+}
+
+// =========================================================================
+// Tier 1 missing core name (issue #6)
+// =========================================================================
+
+#[test]
+fn tier1_missing_core_name_is_skipped() {
+    let mut manifest = rich_manifest();
+
+    // Reference a command that does not exist in `commands`.
+    manifest.tiers = Some(Tiers {
+        core: vec!["get".to_string(), "does_not_exist".to_string()],
+        common: vec![],
+        extended: vec![],
+    });
+
+    let t1 = project_tier1(&manifest);
+
+    // Existing command is present; the absent name is silently skipped.
+    assert!(t1.commands.contains_key("get"));
+    assert!(!t1.commands.contains_key("does_not_exist"));
+    assert_eq!(t1.commands.len(), 1);
+}
+
+// =========================================================================
+// Tier 2 schema fidelity (issue #6)
+// =========================================================================
+
+#[test]
+fn tier2_schema_fidelity() {
+    let mut manifest = rich_manifest();
+
+    // A command carrying enum field values, field descriptions, array items,
+    // arg default/enum/constraints, and prerequisites.
+    manifest.commands.insert(
+        "rich".to_string(),
+        Command {
+            description: "A richly annotated command".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![Arg {
+                name: "mode".to_string(),
+                arg_type: "string".to_string(),
+                required: false,
+                description: "Operating mode".to_string(),
+                default: Some(serde_json::json!("fast")),
+                enum_values: Some(vec!["fast".to_string(), "slow".to_string()]),
+                constraints: Some(serde_json::json!({ "max_length": 8 })),
+            }],
+            flags: vec![],
+            prerequisites: vec!["login".to_string()],
+            output: Some(OutputSchema {
+                output_type: "array".to_string(),
+                fields: vec![],
+                items: Some(Box::new(OutputSchema {
+                    output_type: "object".to_string(),
+                    fields: vec![OutputField {
+                        name: "status".to_string(),
+                        field_type: "string".to_string(),
+                        description: Some("Current status".to_string()),
+                        enum_values: Some(vec!["ok".to_string(), "fail".to_string()]),
+                    }],
+                    items: None,
+                })),
+            }),
+            errors: vec![],
+        },
+    );
+
+    let t2 = project_tier2_command(&manifest, "rich").expect("rich must exist");
+
+    // Command-level prerequisites pass through.
+    assert_eq!(t2.prerequisites, vec!["login".to_string()]);
+
+    // Arg default / enum_values / constraints pass through.
+    let arg = &t2.args[0];
+    assert_eq!(arg.default, Some(serde_json::json!("fast")));
+    assert_eq!(
+        arg.enum_values,
+        Some(vec!["fast".to_string(), "slow".to_string()])
+    );
+    assert_eq!(arg.constraints, Some(serde_json::json!({ "max_length": 8 })));
+
+    // Output schema survives: array items, field description, enum_values.
+    let output = t2.output.as_ref().expect("output must exist");
+    assert_eq!(output.output_type, "array");
+    let items = output.items.as_ref().expect("array items must survive");
+    assert_eq!(items.fields.len(), 1);
+    let field = &items.fields[0];
+    assert_eq!(field.description.as_deref(), Some("Current status"));
+    assert_eq!(
+        field.enum_values,
+        Some(vec!["ok".to_string(), "fail".to_string()])
+    );
+}
+
+// =========================================================================
+// Tier 2 JSON round-trip (issue #6)
+// =========================================================================
+
+#[test]
+fn tier2_round_trip_serialization() {
+    let manifest = rich_manifest();
+    let t2 = project_tier2_command(&manifest, "get").expect("get must exist");
+
+    let json = serde_json::to_string(&t2).expect("serialize tier 2");
+    let deserialized: tsukai_manifest::Tier2Command =
+        serde_json::from_str(&json).expect("deserialize tier 2");
+
+    assert_eq!(t2, deserialized);
+}
+
+// =========================================================================
+// Idempotence (issue #6)
+// =========================================================================
+
+#[test]
+fn projection_is_idempotent() {
+    let manifest = rich_manifest();
+
+    assert_eq!(project_tier0(&manifest), project_tier0(&manifest));
+    assert_eq!(project_tier1(&manifest), project_tier1(&manifest));
+    assert_eq!(
+        project_tier2_command(&manifest, "get"),
+        project_tier2_command(&manifest, "get")
+    );
+}
+
+// =========================================================================
+// Required-flag rendering (issue #6)
+// =========================================================================
+
+#[test]
+fn tier1_required_flag_still_renders_as_optional_bracket() {
+    let mut manifest = rich_manifest();
+
+    // A core command with a required flag. The renderer ignores `flag.required`,
+    // so the flag must still appear in optional `[--flag]` bracket form.
+    manifest.commands.insert(
+        "deploy".to_string(),
+        Command {
+            description: "Deploy a release".to_string(),
+            agent_description: None,
+            mutating: true,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![Flag {
+                name: "--target".to_string(),
+                flag_type: "string".to_string(),
+                required: true,
+                description: "Deployment target".to_string(),
+                default: None,
+            }],
+            prerequisites: vec![],
+            output: None,
+            errors: vec![],
+        },
+    );
+
+    manifest.tiers = Some(Tiers {
+        core: vec!["deploy".to_string()],
+        common: vec![],
+        extended: vec![],
+    });
+
+    let t1 = project_tier1(&manifest);
+
+    assert_eq!(t1.commands["deploy"].args, "[--target STRING]");
 }
