@@ -14,5 +14,9 @@ pub use manifest::{
     AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Flag, Manifest, OutputField,
     OutputSchema, Pathway, PathwayStep, Tiers,
 };
+pub use projection::{
+    CommandGroupSummary, CoreCommandSummary, ErrorDetail, Tier0, Tier1, Tier2Arg, Tier2Command,
+    Tier2Flag, estimate_tokens, project_tier0, project_tier1, project_tier2_command,
+};
 pub use schema::{SCHEMA_ID, generate_manifest_schema, generate_manifest_schema_string};
 pub use validation::{ValidationError, ValidationResult, ValidationWarning, validate};
