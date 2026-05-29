@@ -837,11 +837,7 @@ fn tier1_return_rendering_variants() {
     // Promote `list` (array-of-object output) and `login` (no output) into the
     // core tier alongside the new `ping` command.
     manifest.tiers = Some(Tiers {
-        core: vec![
-            "list".to_string(),
-            "login".to_string(),
-            "ping".to_string(),
-        ],
+        core: vec!["list".to_string(), "login".to_string(), "ping".to_string()],
         common: vec![],
         extended: vec![],
     });
@@ -941,7 +937,10 @@ fn tier2_schema_fidelity() {
         arg.enum_values,
         Some(vec!["fast".to_string(), "slow".to_string()])
     );
-    assert_eq!(arg.constraints, Some(serde_json::json!({ "max_length": 8 })));
+    assert_eq!(
+        arg.constraints,
+        Some(serde_json::json!({ "max_length": 8 }))
+    );
 
     // Output schema survives: array items, field description, enum_values.
     let output = t2.output.as_ref().expect("output must exist");
