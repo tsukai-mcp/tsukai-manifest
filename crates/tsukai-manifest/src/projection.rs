@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::{Command, Manifest, OutputSchema};
+use crate::manifest::{Command, Example, Manifest, OutputSchema};
 
 // ---------------------------------------------------------------------------
 // Tier 0 — Discovery
@@ -49,6 +49,11 @@ pub struct CommandGroupSummary {
     /// explicit group metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// `true` when the group prefix is ALSO a runnable command on its own
+    /// (e.g. `git remote`, `gh pr`). The agent can invoke the bare name in
+    /// addition to the listed subcommands.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub self_command: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +124,9 @@ pub struct Tier2Command {
     /// Output schema (reuses the manifest type directly).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<OutputSchema>,
+    /// Worked invocation examples (passthrough from the manifest).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
     /// Resolved error details from the global taxonomy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ErrorDetail>,
@@ -192,9 +200,15 @@ pub fn estimate_tokens(s: &str) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Project a manifest to Tier 0 (discovery).
+///
+/// Uses a two-pass approach. Pass 1 collects group prefixes (from dot-notation
+/// keys) and interactive commands. Pass 2 classifies bare (dotless) keys: a
+/// bare key that is ALSO a group prefix is the namespace-default command — it
+/// is recorded as that group's `self_command` and excluded from `top_level`
+/// (e.g. `git remote` exists both as a runnable command and a group). Any
+/// other bare key is a plain top-level command.
 pub fn project_tier0(manifest: &Manifest) -> Tier0 {
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut top_level: Vec<String> = Vec::new();
     let mut interactive_commands: Vec<String> = Vec::new();
 
     for (key, cmd) in &manifest.commands {
@@ -203,8 +217,6 @@ pub fn project_tier0(manifest: &Manifest) -> Tier0 {
                 .entry(prefix.to_string())
                 .or_default()
                 .push(leaf.to_string());
-        } else {
-            top_level.push(key.clone());
         }
 
         if cmd.interactive {
@@ -212,14 +224,29 @@ pub fn project_tier0(manifest: &Manifest) -> Tier0 {
         }
     }
 
+    let mut top_level: Vec<String> = Vec::new();
+    let mut self_commands: std::collections::HashSet<String> = Default::default();
+    for key in manifest.commands.keys() {
+        if key.contains('.') {
+            continue;
+        }
+        if groups.contains_key(key) {
+            self_commands.insert(key.clone());
+        } else {
+            top_level.push(key.clone());
+        }
+    }
+
     let groups = groups
         .into_iter()
         .map(|(name, commands)| {
+            let self_command = self_commands.contains(&name);
             (
                 name,
                 CommandGroupSummary {
                     commands,
                     description: None,
+                    self_command,
                 },
             )
         })
@@ -382,6 +409,7 @@ pub fn project_tier2_command(manifest: &Manifest, command: &str) -> Option<Tier2
         args,
         flags,
         output: cmd.output.clone(),
+        examples: cmd.examples.clone(),
         errors,
     })
 }

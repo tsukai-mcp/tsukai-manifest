@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use semver::Version;
 use tsukai_manifest::{
-    AgentConfig, Arg, Command, ErrorDef, Flag, Manifest, OutputField, OutputSchema, Pathway,
-    PathwayStep, Tiers, estimate_tokens, project_tier0, project_tier1, project_tier2_command,
+    AgentConfig, Arg, Command, ErrorDef, Example, Flag, Manifest, OutputField, OutputSchema,
+    Pathway, PathwayStep, Tiers, estimate_tokens, project_tier0, project_tier1,
+    project_tier2_command,
 };
 
 /// Build a rich test manifest with grouped commands, tiers, pathways, errors,
@@ -136,6 +137,7 @@ fn rich_manifest() -> Manifest {
                         ],
                         items: None,
                     }),
+                    examples: vec![],
                     errors: vec!["not_found".to_string(), "connection".to_string()],
                 },
             ),
@@ -188,6 +190,7 @@ fn rich_manifest() -> Manifest {
                         ],
                         items: None,
                     }),
+                    examples: vec![],
                     errors: vec!["connection".to_string()],
                 },
             ),
@@ -225,6 +228,7 @@ fn rich_manifest() -> Manifest {
                             items: None,
                         })),
                     }),
+                    examples: vec![],
                     errors: vec![],
                 },
             ),
@@ -241,6 +245,7 @@ fn rich_manifest() -> Manifest {
                     flags: vec![],
                     prerequisites: vec![],
                     output: None,
+                    examples: vec![],
                     errors: vec!["auth_required".to_string()],
                 },
             ),
@@ -298,6 +303,7 @@ fn rich_manifest() -> Manifest {
                         ],
                         items: None,
                     }),
+                    examples: vec![],
                     errors: vec!["not_found".to_string()],
                 },
             ),
@@ -331,6 +337,7 @@ fn rich_manifest() -> Manifest {
                         }],
                         items: None,
                     }),
+                    examples: vec![],
                     errors: vec!["auth_required".to_string()],
                 },
             ),
@@ -355,6 +362,7 @@ fn rich_manifest() -> Manifest {
                     flags: vec![],
                     prerequisites: vec![],
                     output: None,
+                    examples: vec![],
                     errors: vec!["not_found".to_string(), "auth_required".to_string()],
                 },
             ),
@@ -398,6 +406,7 @@ fn rich_manifest() -> Manifest {
                             items: None,
                         })),
                     }),
+                    examples: vec![],
                     errors: vec![],
                 },
             ),
@@ -750,6 +759,7 @@ fn tier2_unresolved_error_produces_fallback() {
             flags: vec![],
             prerequisites: vec![],
             output: None,
+            examples: vec![],
             errors: vec!["not_found".to_string(), "totally_unknown".to_string()],
         },
     );
@@ -790,6 +800,7 @@ fn tier0_multi_level_dot_notation() {
             flags: vec![],
             prerequisites: vec![],
             output: None,
+            examples: vec![],
             errors: vec![],
         },
     );
@@ -830,6 +841,7 @@ fn tier1_return_rendering_variants() {
                 fields: vec![],
                 items: None,
             }),
+            examples: vec![],
             errors: vec![],
         },
     );
@@ -921,6 +933,7 @@ fn tier2_schema_fidelity() {
                     items: None,
                 })),
             }),
+            examples: vec![],
             errors: vec![],
         },
     );
@@ -1016,6 +1029,7 @@ fn tier1_required_flag_still_renders_as_optional_bracket() {
             }],
             prerequisites: vec![],
             output: None,
+            examples: vec![],
             errors: vec![],
         },
     );
@@ -1029,4 +1043,200 @@ fn tier1_required_flag_still_renders_as_optional_bracket() {
     let t1 = project_tier1(&manifest);
 
     assert_eq!(t1.commands["deploy"].args, "[--target STRING]");
+}
+
+// =========================================================================
+// Tier 2 examples passthrough (issue #18)
+// =========================================================================
+
+#[test]
+fn tier2_emits_examples_when_present() {
+    let mut manifest = rich_manifest();
+
+    manifest.commands.insert(
+        "exemplary".to_string(),
+        Command {
+            description: "A command with worked examples".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![],
+            prerequisites: vec![],
+            output: None,
+            examples: vec![
+                Example {
+                    description: "Check a PR's merge readiness".to_string(),
+                    invocation: "tt pr view 42 --json state".to_string(),
+                    output: Some(serde_json::json!({ "state": "open" })),
+                    note: Some("Use before merging.".to_string()),
+                },
+                Example {
+                    description: "Minimal form".to_string(),
+                    invocation: "tt pr view 42".to_string(),
+                    output: None,
+                    note: None,
+                },
+            ],
+            errors: vec![],
+        },
+    );
+
+    let t2 = project_tier2_command(&manifest, "exemplary").expect("exemplary must exist");
+
+    assert_eq!(t2.examples.len(), 2);
+    assert_eq!(t2.examples[0].description, "Check a PR's merge readiness");
+    assert_eq!(t2.examples[0].invocation, "tt pr view 42 --json state");
+    assert_eq!(
+        t2.examples[0].output,
+        Some(serde_json::json!({ "state": "open" }))
+    );
+    assert_eq!(t2.examples[0].note.as_deref(), Some("Use before merging."));
+
+    assert_eq!(t2.examples[1].output, None);
+    assert!(t2.examples[1].note.is_none());
+}
+
+#[test]
+fn tier2_examples_default_empty() {
+    // `get` carries no examples; the Tier 2 projection must reflect that and
+    // skip the field on serialization.
+    let manifest = rich_manifest();
+    let t2 = project_tier2_command(&manifest, "get").expect("get must exist");
+    assert!(t2.examples.is_empty());
+
+    let json = serde_json::to_string(&t2).expect("serialize tier 2");
+    assert!(
+        !json.contains("examples"),
+        "empty examples must be skipped in serialization: {json}"
+    );
+}
+
+#[test]
+fn examples_do_not_inflate_tier0_or_tier1_budget() {
+    // Attach examples to commands that participate in Tier 0 grouping and the
+    // Tier 1 core projection, then confirm neither budget is affected.
+    let baseline = rich_manifest();
+    let t0_baseline = serde_json::to_string(&project_tier0(&baseline)).expect("t0");
+    let t1_baseline = serde_json::to_string(&project_tier1(&baseline)).expect("t1");
+
+    let mut manifest = rich_manifest();
+    let example = Example {
+        description: "A long worked example designed to be large".to_string(),
+        invocation: "tt get some-very-long-key-name --id 1234567890 --json".to_string(),
+        output: Some(serde_json::json!({
+            "key": "some-very-long-key-name",
+            "type": "string",
+            "value": "a fairly long illustrative value that would inflate any tier that included it"
+        })),
+        note: Some(
+            "This note exists purely to add bulk so that, if examples ever leaked into Tier 0 \
+             or Tier 1, the budget assertions below would catch it."
+                .to_string(),
+        ),
+    };
+    // `get` is a Tier 1 core command; `pr.view` is core and grouped under `pr`.
+    for name in ["get", "pr.view", "set"] {
+        manifest
+            .commands
+            .get_mut(name)
+            .unwrap()
+            .examples
+            .push(example.clone());
+    }
+
+    let t0 = project_tier0(&manifest);
+    let t1 = project_tier1(&manifest);
+    let t0_json = serde_json::to_string(&t0).expect("t0");
+    let t1_json = serde_json::to_string(&t1).expect("t1");
+
+    // Byte-for-byte identical: examples never reach Tier 0 or Tier 1.
+    assert_eq!(t0_json, t0_baseline, "examples leaked into Tier 0");
+    assert_eq!(t1_json, t1_baseline, "examples leaked into Tier 1");
+
+    // And the documented budgets still hold.
+    assert!(estimate_tokens(&t0_json) <= 300, "Tier 0 over budget");
+    assert!(estimate_tokens(&t1_json) <= 600, "Tier 1 over budget");
+}
+
+// =========================================================================
+// Tier 0 self_command disambiguation (issue #19)
+// =========================================================================
+
+#[test]
+fn tier0_self_command_when_bare_matches_group_prefix() {
+    let mut manifest = empty_manifest();
+
+    // `pr` exists both as a bare command and as a group prefix.
+    for (key, desc) in [
+        ("pr", "Default pull request action"),
+        ("pr.view", "View a pull request"),
+        ("pr.merge", "Merge a pull request"),
+    ] {
+        manifest.commands.insert(
+            key.to_string(),
+            Command {
+                description: desc.to_string(),
+                agent_description: None,
+                mutating: false,
+                destructive: false,
+                interactive: false,
+                non_interactive_alternative: None,
+                args: vec![],
+                flags: vec![],
+                prerequisites: vec![],
+                output: None,
+                examples: vec![],
+                errors: vec![],
+            },
+        );
+    }
+
+    let t0 = project_tier0(&manifest);
+
+    let pr_group = t0.groups.get("pr").expect("pr group must exist");
+    assert!(pr_group.self_command, "pr must be flagged as self_command");
+    assert!(pr_group.commands.contains(&"view".to_string()));
+    assert!(pr_group.commands.contains(&"merge".to_string()));
+
+    // The bare `pr` must NOT appear in top-level commands — it is the group's
+    // self_command instead.
+    assert!(
+        !t0.commands.contains(&"pr".to_string()),
+        "bare pr must be excluded from top_level"
+    );
+}
+
+#[test]
+fn tier0_group_prefix_without_bare_command_is_not_self_command() {
+    let mut manifest = empty_manifest();
+
+    // `issue.list` creates an `issue` group, but there is no bare `issue`.
+    manifest.commands.insert(
+        "issue.list".to_string(),
+        Command {
+            description: "List issues".to_string(),
+            agent_description: None,
+            mutating: false,
+            destructive: false,
+            interactive: false,
+            non_interactive_alternative: None,
+            args: vec![],
+            flags: vec![],
+            prerequisites: vec![],
+            output: None,
+            examples: vec![],
+            errors: vec![],
+        },
+    );
+
+    let t0 = project_tier0(&manifest);
+
+    let issue_group = t0.groups.get("issue").expect("issue group must exist");
+    assert!(
+        !issue_group.self_command,
+        "issue must not be a self_command (no bare command exists)"
+    );
 }
