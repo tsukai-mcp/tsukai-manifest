@@ -11,7 +11,7 @@ pub mod schema;
 pub mod validation;
 
 pub use manifest::{
-    AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Flag, Manifest, OutputField,
+    AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Example, Flag, Manifest, OutputField,
     OutputSchema, Pathway, PathwayStep, Tiers,
 };
 pub use projection::{

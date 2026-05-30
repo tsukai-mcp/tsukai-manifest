@@ -266,9 +266,34 @@ pub struct Command {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<OutputSchema>,
 
+    /// Worked invocation examples. Emitted at Tier 2. Optional.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
+
     /// Error kinds this command can produce (references global error `kind`s).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
+}
+
+/// A worked invocation example for a command.
+///
+/// Examples are the single highest-value signal for an agent deciding how to
+/// call a command: they show a concrete, assembled invocation and (optionally)
+/// what a successful result looks like. Emitted at Tier 2.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Example {
+    /// What this example demonstrates (e.g. "Check a PR's merge readiness").
+    pub description: String,
+    /// The concrete invocation, as the agent would run it. Includes the
+    /// base_command prefix so it is copy-runnable.
+    pub invocation: String,
+    /// Optional illustrative output. A JSON value when the command emits
+    /// structured output; the bridge may truncate large samples.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
+    /// Optional note on when to use this form (caveats, preconditions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A command argument (positional or named).
@@ -504,6 +529,7 @@ mod tests {
                         ],
                         items: None,
                     }),
+                    examples: vec![],
                     errors: vec!["not_found".to_string(), "connection".to_string()],
                 },
             )]),
@@ -582,6 +608,7 @@ mod tests {
         assert!(cmd.flags.is_empty());
         assert!(cmd.prerequisites.is_empty());
         assert!(cmd.output.is_none());
+        assert!(cmd.examples.is_empty());
         assert!(cmd.errors.is_empty());
     }
 
