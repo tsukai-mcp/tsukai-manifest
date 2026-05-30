@@ -3,7 +3,7 @@
   "name": "mx-kv",
   "bin": "mx",
   "version": "0.1.184",
-  "description": "Local file-backed key-value store for 八百万重工 agents (string, counter, list, history, and state types).",
+  "description": "Local key-value store for fast agent state (string, counter, list, history, and state types).",
   "base_command": ["mx", "kv"],
 
   "agent": {
@@ -26,7 +26,7 @@
   "tiers": {
     "core": ["get", "set", "keys"],
     "common": ["push", "last", "search"],
-    "extended": ["pop", "reset", "count", "random", "inc", "dec", "since", "remove", "dump"]
+    "extended": ["pop", "reset", "count", "random", "inc", "dec", "since", "remove", "update", "migrate", "dump"]
   },
 
   "pathways": [
@@ -82,346 +82,291 @@
 
   "commands": {
     "keys": {
-      "description": "List all defined keys and their types.",
-      "agent_description": "Enumerate every KV key with its type before reading or writing — the cheapest way to orient.",
+      "description": "List all defined keys with their types and descriptions.",
+      "agent_description": "Enumerate every KV key with its type before reading or writing — the cheapest way to orient. Output is a plain text table; there is no JSON mode.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [],
-      "flags": [
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human table."}
-      ],
-      "output": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "fields": [
-            {"name": "key", "type": "string", "description": "Key name."},
-            {"name": "type", "type": "string", "description": "Storage type.", "enum": ["string", "counter", "list", "history", "state"]}
-          ]
-        }
-      },
+      "flags": [],
       "examples": [
         {
-          "description": "List all keys as JSON for parsing.",
-          "invocation": "mx kv keys --json",
-          "output": [
-            {"key": "焦点", "type": "string"},
-            {"key": "完了", "type": "history"}
-          ],
-          "note": "Always run this first when you do not already know a key's type."
+          "description": "List every key and its type.",
+          "invocation": "mx kv keys",
+          "note": "Run this first when you do not already know a key's type. There is no --json flag; the output is a text table of key and type."
         }
       ]
     },
 
     "get": {
-      "description": "Read the current value of a key.",
-      "agent_description": "Read a string/counter/state value, or a specific list/history entry via --id.",
+      "description": "Get the current value of a key, or specific entries by ID.",
+      "agent_description": "Read a string/counter/state value, or specific list/history entries via --id.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "Key name to read."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
       "flags": [
-        {"name": "--id", "type": "string", "required": false, "description": "Entry index, range (35-64), or comma list (1,5,12) for list/history keys."},
-        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve a linked kn- memory reference into its full content."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human value."}
+        {"name": "--id", "type": "string", "required": false, "description": "Entry ID (35), range (35-64), or comma-separated IDs (1,5,12). Formats cannot be combined."},
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display the linked memory entry (kn- reference)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."}
       ],
       "output": {
         "type": "object",
         "fields": [
-          {"name": "key", "type": "string", "description": "The key that was read."},
-          {"name": "type", "type": "string", "description": "Storage type of the key.", "enum": ["string", "counter", "list", "history", "state"]},
-          {"name": "value", "type": "any", "description": "Current value (string, integer, JSON object, or array of entries)."}
+          {"name": "value", "type": "any", "description": "For scalar keys (string/counter/state) the value is returned directly under \"value\"; for list/history keys the result is instead an array of entry objects ({index, id, value, ts})."}
         ]
       },
       "examples": [
         {
           "description": "Read a string key and parse the JSON result.",
           "invocation": "mx kv get 焦点 --json",
-          "output": {"key": "焦点", "type": "string", "value": "ship the manifest CLI"},
+          "output": {"value": "tsukai-mcp/tsukai-manifest M1 wrap in progress"},
           "note": "Prefer --json whenever the value will be parsed programmatically."
         },
         {
-          "description": "Read a range of history entries by index.",
+          "description": "Read a range of history entries by ID.",
           "invocation": "mx kv get 完了 --id 35-40 --json",
-          "note": "Ranges and comma lists only apply to list and history keys."
+          "output": [
+            {"index": 35, "id": "2f6F7b", "value": "...", "ts": "2026-05-28T21:36:10.458733724+00:00"}
+          ],
+          "note": "Ranges and comma lists only apply to list and history keys; the result is an array of entries."
         }
       ],
       "errors": ["not_found", "empty_key"]
     },
 
     "set": {
-      "description": "Set a string/counter value, or a single field of a state key.",
-      "agent_description": "Write a string or counter value; for state keys pass FIELD then VALUE.",
+      "description": "Set a value (string/counter), set field(s) on a state type, or batch set via --json.",
+      "agent_description": "Write a string/counter value (one positional VALUE), set a state field (FIELD VALUE), or batch-set state fields with --json. Positionals also accept key=value pairs for batch state set.",
       "mutating": true,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "Key name to write."},
-        {"name": "field_or_value", "type": "string", "required": true, "description": "For string/counter keys this is the value; for state keys this is the field name."},
-        {"name": "value", "type": "string", "required": false, "description": "The value, when setting a state key field (FIELD VALUE form)."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "args", "type": "string", "required": false, "description": "Positional arguments: value (string/counter), field value (state), or key=value pairs (batch state set)."}
       ],
       "flags": [
-        {"name": "--memory", "type": "string", "required": false, "description": "Link a kn- memory entry to this value."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+        {"name": "--json", "type": "string", "required": false, "description": "JSON value: object for state batch, array for tensor positional set. Use \"-\" to read from stdin."},
+        {"name": "--memory", "type": "string", "required": false, "description": "Link a memory entry (kn- ID) to this key, or \"\" to clear."},
+        {"name": "--id", "type": "string", "required": false, "description": "Target a specific entry by ID (numeric or kv-HASH) for --memory."}
       ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The key that was written."},
-          {"name": "value", "type": "any", "description": "The new value."},
-          {"name": "previous", "type": "any", "description": "The prior value, if the key already existed."}
-        ]
-      },
       "examples": [
         {
-          "description": "Set a string key.",
+          "description": "Set a string key to a single value.",
           "invocation": "mx kv set 焦点 \"ship the manifest CLI\"",
-          "note": "String and counter keys take a single VALUE argument."
+          "note": "String and counter keys take a single positional VALUE."
         },
         {
-          "description": "Set one field of a state key.",
+          "description": "Set one field of a state key (FIELD then VALUE).",
           "invocation": "mx kv set deploy status green",
-          "note": "State keys take FIELD then VALUE; the key must already be of type state."
+          "note": "State keys take FIELD then VALUE as positionals; the key must already be of type state."
+        },
+        {
+          "description": "Batch-set multiple fields of a state key via a JSON object.",
+          "invocation": "mx kv set deploy --json '{\"status\":\"green\",\"target\":\"prod\"}'",
+          "note": "--json takes the value to write (use \"-\" to read it from stdin); it is an input, not an output toggle."
         }
       ],
       "errors": ["not_found", "type_mismatch"]
     },
 
     "inc": {
-      "description": "Increment a counter key.",
+      "description": "Increment a counter.",
       "mutating": true,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "Counter key to increment."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
       "flags": [
-        {"name": "--by", "type": "integer", "required": false, "description": "Step size to add.", "default": 1},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+        {"name": "--by", "type": "integer", "required": false, "description": "Amount to increment by (default: 1).", "default": 1}
       ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The counter key."},
-          {"name": "value", "type": "integer", "description": "The counter value after incrementing."}
-        ]
-      },
+      "examples": [
+        {
+          "description": "Increment a counter by 5.",
+          "invocation": "mx kv inc retry-count --by 5",
+          "note": "Omit --by to add 1. Only valid on counter keys."
+        }
+      ],
       "errors": ["not_found", "type_mismatch"]
     },
 
     "dec": {
-      "description": "Decrement a counter key.",
+      "description": "Decrement a counter.",
       "mutating": true,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "Counter key to decrement."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
       "flags": [
-        {"name": "--by", "type": "integer", "required": false, "description": "Step size to subtract.", "default": 1},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+        {"name": "--by", "type": "integer", "required": false, "description": "Amount to decrement by (default: 1).", "default": 1}
       ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The counter key."},
-          {"name": "value", "type": "integer", "description": "The counter value after decrementing."}
-        ]
-      },
       "errors": ["not_found", "type_mismatch"]
     },
 
     "push": {
-      "description": "Append an entry to a list or history key.",
+      "description": "Push a value onto a history or list.",
       "agent_description": "Append a value (optionally with structured --data) to a list/history; --create makes the key if missing.",
       "mutating": true,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to append to."},
-        {"name": "value", "type": "string", "required": true, "description": "The entry value."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "value", "type": "string", "required": true, "description": "Value to push."}
       ],
       "flags": [
-        {"name": "--data", "type": "string", "required": false, "description": "Structured JSON data attached to the entry."},
-        {"name": "--memory", "type": "string", "required": false, "description": "Link a kn- memory entry to this entry."},
-        {"name": "--create", "type": "string", "required": false, "description": "Auto-create the key with this type if it does not exist.", "enum": ["list", "history"]},
-        {"name": "--max-entries", "type": "integer", "required": false, "description": "Cap retained entries when creating the key (used with --create)."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+        {"name": "--data", "type": "string", "required": false, "description": "Attach structured JSON data to this entry."},
+        {"name": "--memory", "type": "string", "required": false, "description": "Link a memory entry (kn- ID) to this entry."},
+        {"name": "--create", "type": "string", "required": false, "description": "Auto-create key in schema if missing (type: history or list).", "enum": ["history", "list"]},
+        {"name": "--max-entries", "type": "integer", "required": false, "description": "Maximum entries for the new key (only with --create)."}
       ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The key appended to."},
-          {"name": "id", "type": "integer", "description": "Index assigned to the new entry."},
-          {"name": "hash", "type": "string", "description": "Stable kv- hash of the new entry."}
-        ]
-      },
       "examples": [
         {
           "description": "Append a finding to a history key, creating it if absent.",
           "invocation": "mx kv push 知見 \"clippy denies all warnings in CI\" --create history",
           "note": "Use --create the first time you write a key that is not yet in the schema."
+        },
+        {
+          "description": "Push with attached structured data.",
+          "invocation": "mx kv push 倉庫 mx --data '{\"host\":\"github\",\"org\":\"yaoyorozu-industries\"}'",
+          "note": "--where filters on search/last/count/random match these top-level data fields."
         }
       ],
       "errors": ["not_found", "type_mismatch"]
     },
 
     "pop": {
-      "description": "Remove and return the last entry of a list key.",
+      "description": "Pop the last value from a list.",
       "mutating": true,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List key to pop from."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
-      "flags": [
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human value."}
+      "flags": [],
+      "examples": [
+        {
+          "description": "Remove and return the last entry of a list key.",
+          "invocation": "mx kv pop 案件",
+          "note": "Lists only — 'pop' on a history is a type_mismatch."
+        }
       ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The list key."},
-          {"name": "value", "type": "any", "description": "The removed entry value."}
-        ]
-      },
       "errors": ["not_found", "type_mismatch", "empty_key"]
     },
 
-    "remove": {
-      "description": "Remove entries from a list or history key by index, hash, or matching substring.",
-      "agent_description": "Delete entries by --id (index or kv- hash) or by substring; add --all to remove every match.",
-      "mutating": true,
-      "destructive": true,
-      "interactive": false,
-      "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to remove from."},
-        {"name": "substring", "type": "string", "required": false, "description": "Substring to match for removal (omit when using --id)."}
-      ],
-      "flags": [
-        {"name": "--id", "type": "string", "required": false, "description": "Entry index or kv- hash to remove."},
-        {"name": "--all", "type": "boolean", "required": false, "description": "Remove every entry matching the substring, not just the first."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
-      ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The key removed from."},
-          {"name": "removed", "type": "integer", "description": "Count of entries removed."}
-        ]
-      },
-      "errors": ["not_found", "type_mismatch"]
-    },
-
-    "reset": {
-      "description": "Reset a key to its schema default, discarding all current data.",
-      "agent_description": "Destructive: clears a key back to its schema default. Irreversible — there is no undo.",
-      "mutating": true,
-      "destructive": true,
-      "interactive": false,
-      "args": [
-        {"name": "key", "type": "string", "required": true, "description": "Key to reset."}
-      ],
-      "flags": [
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
-      ],
-      "output": {
-        "type": "object",
-        "fields": [
-          {"name": "key", "type": "string", "description": "The key that was reset."},
-          {"name": "type", "type": "string", "description": "Storage type of the key.", "enum": ["string", "counter", "list", "history", "state"]}
-        ]
-      },
-      "examples": [
-        {
-          "description": "Reset a list key back to empty.",
-          "invocation": "mx kv reset 案件",
-          "note": "Destructive and irreversible — confirm the key name before running."
-        }
-      ],
-      "errors": ["not_found"]
-    },
-
     "last": {
-      "description": "Return the most recent entries of a list or history key.",
+      "description": "Get the last N entries from a history or list.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to read."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
       "flags": [
-        {"name": "--count", "type": "integer", "required": false, "description": "Number of trailing entries to return.", "default": 1},
-        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
-        {"name": "--since", "type": "string", "required": false, "description": "Only entries since a relative time (e.g. 30m, 1h, 7d, 2w)."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+        {"name": "--count", "type": "integer", "required": false, "description": "Number of entries (default: 1).", "default": 1},
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display the linked memory entry (kn- reference)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by structured data fields (key=value, top-level fields only, repeatable)."},
+        {"name": "--day", "type": "string", "required": false, "description": "Filter by specific day (YYYY-MM-DD, UTC)."},
+        {"name": "--month", "type": "string", "required": false, "description": "Filter by month (YYYY-MM, UTC)."},
+        {"name": "--week", "type": "string", "required": false, "description": "Filter by ISO week (YYYY-Www, e.g. 2026-W17)."},
+        {"name": "--from", "type": "string", "required": false, "description": "Start of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--to", "type": "string", "required": false, "description": "End of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--since", "type": "string", "required": false, "description": "Filter entries since a relative time (e.g. 30d, 1w, 2h) or ISO-8601 timestamp."}
       ],
       "output": {
         "type": "array",
         "items": {
           "type": "object",
           "fields": [
-            {"name": "id", "type": "integer", "description": "Entry index."},
-            {"name": "hash", "type": "string", "description": "Stable kv- entry hash."},
+            {"name": "index", "type": "integer", "description": "Entry index within the key."},
+            {"name": "id", "type": "string", "description": "Stable entry hash."},
             {"name": "value", "type": "string", "description": "Entry value."},
-            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+            {"name": "ts", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
           ]
         }
       },
+      "examples": [
+        {
+          "description": "Read the last 5 entries of a history key as JSON.",
+          "invocation": "mx kv last 完了 --count 5 --json",
+          "output": [
+            {"index": 13, "id": "2f6F7b", "value": "...", "ts": "2026-05-28T21:36:10.458733724+00:00"}
+          ],
+          "note": "Each entry carries index, id (hash), value, and ts."
+        }
+      ],
       "errors": ["not_found", "type_mismatch", "empty_key"]
     },
 
     "since": {
-      "description": "Return entries recorded since a relative time or ISO-8601 timestamp.",
+      "description": "Get history entries since a time reference (ISO-8601 or relative: 1h, 7d, 2w, 30m).",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "History or list key to read."},
-        {"name": "when", "type": "string", "required": true, "description": "Relative time (30m, 1h, 7d, 2w) or ISO-8601 timestamp."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "timeref", "type": "string", "required": true, "description": "Time reference (e.g., \"1h\", \"7d\", \"2w\", \"30m\", or ISO-8601)."}
       ],
       "flags": [
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display the linked memory entry (kn- reference)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."}
       ],
       "output": {
         "type": "array",
         "items": {
           "type": "object",
           "fields": [
-            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "index", "type": "integer", "description": "Entry index within the key."},
+            {"name": "id", "type": "string", "description": "Stable entry hash."},
             {"name": "value", "type": "string", "description": "Entry value."},
-            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+            {"name": "ts", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
           ]
         }
       },
+      "examples": [
+        {
+          "description": "Get history entries from the last 7 days as JSON.",
+          "invocation": "mx kv since 完了 7d --json",
+          "note": "TIMEREF is a positional argument, not a flag."
+        }
+      ],
       "errors": ["not_found", "type_mismatch", "empty_key"]
     },
 
     "search": {
-      "description": "Case-insensitive substring search over a list or history key.",
+      "description": "Search entries in a list/history by substring and/or structured data filters.",
       "agent_description": "Find entries whose value contains a query string; combine with --where and date filters.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to search."},
-        {"name": "query", "type": "string", "required": true, "description": "Substring to match (case-insensitive)."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "query", "type": "string", "required": false, "description": "Search query (case-insensitive substring match on entry values)."}
       ],
       "flags": [
-        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
-        {"name": "--since", "type": "string", "required": false, "description": "Only entries since a relative time (e.g. 30m, 1h, 7d, 2w)."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display the linked memory entry (kn- reference)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by structured data fields (key=value, top-level fields only, repeatable)."},
+        {"name": "--day", "type": "string", "required": false, "description": "Filter by specific day (YYYY-MM-DD, UTC)."},
+        {"name": "--month", "type": "string", "required": false, "description": "Filter by month (YYYY-MM, UTC)."},
+        {"name": "--week", "type": "string", "required": false, "description": "Filter by ISO week (YYYY-Www, e.g. 2026-W17)."},
+        {"name": "--from", "type": "string", "required": false, "description": "Start of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--to", "type": "string", "required": false, "description": "End of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--since", "type": "string", "required": false, "description": "Filter entries since a relative time (e.g. 30d, 1w, 2h) or ISO-8601 timestamp."}
       ],
       "output": {
         "type": "array",
         "items": {
           "type": "object",
           "fields": [
-            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "index", "type": "integer", "description": "Entry index within the key."},
+            {"name": "id", "type": "string", "description": "Stable entry hash."},
             {"name": "value", "type": "string", "description": "Matching entry value."},
-            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+            {"name": "ts", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
           ]
         }
       },
@@ -429,78 +374,205 @@
         {
           "description": "Search a history key for entries mentioning a topic.",
           "invocation": "mx kv search 完了 \"manifest\" --json",
-          "note": "Matching is a plain case-insensitive substring test, not a regex."
+          "note": "Matching is a plain case-insensitive substring test, not a regex. QUERY is optional when filtering only by --where."
         }
       ],
       "errors": ["not_found", "type_mismatch"]
     },
 
     "count": {
-      "description": "Count entries in a list or history key, optionally matching a substring.",
+      "description": "Count entries in a list/history, optionally filtered.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to count."},
-        {"name": "filter", "type": "string", "required": false, "description": "Only count entries containing this substring."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "value", "type": "string", "required": false, "description": "Count only entries matching this substring."}
       ],
       "flags": [
-        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human count."}
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by structured data fields (key=value, top-level fields only, repeatable)."},
+        {"name": "--day", "type": "string", "required": false, "description": "Filter by specific day (YYYY-MM-DD, UTC)."},
+        {"name": "--month", "type": "string", "required": false, "description": "Filter by month (YYYY-MM, UTC)."},
+        {"name": "--week", "type": "string", "required": false, "description": "Filter by ISO week (YYYY-Www, e.g. 2026-W17)."},
+        {"name": "--from", "type": "string", "required": false, "description": "Start of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--to", "type": "string", "required": false, "description": "End of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--since", "type": "string", "required": false, "description": "Filter entries since a relative time (e.g. 30d, 1w, 2h) or ISO-8601 timestamp."}
       ],
       "output": {
         "type": "object",
         "fields": [
-          {"name": "key", "type": "string", "description": "The counted key."},
-          {"name": "count", "type": "integer", "description": "Number of matching entries."}
+          {"name": "count", "type": "integer", "description": "Number of matching entries."},
+          {"name": "latest_ts", "type": "string", "description": "ISO-8601 timestamp of the most recent matching entry."}
         ]
       },
+      "examples": [
+        {
+          "description": "Count history entries as JSON.",
+          "invocation": "mx kv count 完了 --json",
+          "output": {"count": 13, "latest_ts": "2026-05-28T21:36:10.458733724+00:00"},
+          "note": "Pass a positional VALUE to count only entries containing that substring."
+        }
+      ],
       "errors": ["not_found", "type_mismatch"]
     },
 
     "random": {
-      "description": "Return random entries from a list or history key.",
+      "description": "Get N random entries from a history or list.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": "List or history key to sample."}
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
       ],
       "flags": [
-        {"name": "--count", "type": "integer", "required": false, "description": "Number of random entries to return.", "default": 1},
-        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
-        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+        {"name": "--count", "type": "integer", "required": false, "description": "Number of random entries (default: 1).", "default": 1},
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display the linked memory entry."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Output as JSON."},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by structured data fields (key=value, top-level fields only, repeatable)."},
+        {"name": "--day", "type": "string", "required": false, "description": "Filter by specific day (YYYY-MM-DD, UTC)."},
+        {"name": "--month", "type": "string", "required": false, "description": "Filter by month (YYYY-MM, UTC)."},
+        {"name": "--week", "type": "string", "required": false, "description": "Filter by ISO week (YYYY-Www, e.g. 2026-W17)."},
+        {"name": "--from", "type": "string", "required": false, "description": "Start of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--to", "type": "string", "required": false, "description": "End of date range, inclusive (YYYY-MM-DD, UTC)."},
+        {"name": "--since", "type": "string", "required": false, "description": "Filter entries since a relative time (e.g. 30d, 1w, 2h) or ISO-8601 timestamp."}
       ],
       "output": {
         "type": "array",
         "items": {
           "type": "object",
           "fields": [
-            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "index", "type": "integer", "description": "Entry index within the key."},
+            {"name": "id", "type": "string", "description": "Stable entry hash."},
             {"name": "value", "type": "string", "description": "Entry value."},
-            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+            {"name": "ts", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
           ]
         }
       },
       "errors": ["not_found", "type_mismatch", "empty_key"]
     },
 
+    "remove": {
+      "description": "Remove an entry by value or ID from a list/history.",
+      "agent_description": "Delete entries by --id (numeric index or kv- hash) or by substring VALUE; add --all to remove every match.",
+      "mutating": true,
+      "destructive": true,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "value", "type": "string", "required": false, "description": "Value substring to match (omit if using --id)."}
+      ],
+      "flags": [
+        {"name": "--id", "type": "string", "required": false, "description": "Remove by entry ID (numeric) or hash (kv-XXXX)."},
+        {"name": "--all", "type": "boolean", "required": false, "description": "Remove all matches (default: first match only)."}
+      ],
+      "examples": [
+        {
+          "description": "Remove a specific entry by ID.",
+          "invocation": "mx kv remove 案件 --id 5",
+          "note": "Use the positional VALUE form to match by substring instead; add --all to remove every match."
+        }
+      ],
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "update": {
+      "description": "Update an existing entry's value and/or structured data in-place. Preserves the entry's ID, position, and timestamp.",
+      "agent_description": "Edit an existing list/history entry in place by --id, changing its value text and/or merging structured --data. ID, position, and timestamp are preserved.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name."},
+        {"name": "value", "type": "string", "required": false, "description": "New value text (omit to update only --data)."}
+      ],
+      "flags": [
+        {"name": "--id", "type": "string", "required": true, "description": "Target entry by ID (numeric index or kv-HASH prefix). Required."},
+        {"name": "--data", "type": "string", "required": false, "description": "JSON object to merge into the entry's structured data. Null field values delete that field from the merged result."}
+      ],
+      "examples": [
+        {
+          "description": "Rewrite an entry's value text in place.",
+          "invocation": "mx kv update 案件 --id 5 \"new task description\"",
+          "note": "--id is required. Omit the positional VALUE to update only --data."
+        },
+        {
+          "description": "Merge structured data into an entry, deleting a field with null.",
+          "invocation": "mx kv update 倉庫 --id kv-2Bdsdz --data '{\"status\":\"archived\",\"stale\":null}'",
+          "note": "Null field values delete that field from the merged data."
+        }
+      ],
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "migrate": {
+      "description": "Migrate existing entries to match current schema data definitions.",
+      "agent_description": "Reconcile a key's existing entries with the current schema's data definitions; --prune drops undeclared fields, --dry-run previews without writing.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
+      ],
+      "flags": [
+        {"name": "--prune", "type": "boolean", "required": false, "description": "Remove fields not declared in the current schema."},
+        {"name": "--dry-run", "type": "boolean", "required": false, "description": "Show what would change without modifying data."}
+      ],
+      "examples": [
+        {
+          "description": "Preview a schema migration without writing.",
+          "invocation": "mx kv migrate 倉庫 --dry-run",
+          "note": "Drop --dry-run to apply; add --prune to also remove fields no longer declared in the schema."
+        }
+      ],
+      "errors": ["not_found"]
+    },
+
+    "reset": {
+      "description": "Reset a key to its schema default.",
+      "agent_description": "Destructive: clears a key back to its schema default. Irreversible — there is no undo.",
+      "mutating": true,
+      "destructive": true,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name."}
+      ],
+      "flags": [],
+      "examples": [
+        {
+          "description": "Reset a list key back to its schema default (empty).",
+          "invocation": "mx kv reset 案件",
+          "note": "Destructive and irreversible — confirm the key name before running."
+        }
+      ],
+      "errors": ["not_found"]
+    },
+
     "dump": {
-      "description": "Dump all KV state as JSON.",
-      "agent_description": "Read every key and value at once; use --format compact for one line per key.",
+      "description": "Dump all state.",
+      "agent_description": "Read every key and value at once; use --format compact for a one-line key=value layout.",
       "mutating": false,
       "destructive": false,
       "interactive": false,
       "args": [],
       "flags": [
-        {"name": "--format", "type": "string", "required": false, "description": "Output layout.", "default": "pretty", "enum": ["pretty", "compact"]}
+        {"name": "--format", "type": "string", "required": false, "description": "Output format: compact or json.", "default": "json", "enum": ["json", "compact"]},
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve and display linked memory entries (kn- references)."}
       ],
       "output": {
         "type": "object",
         "fields": [
-          {"name": "keys", "type": "any", "description": "Map of every key to its current value and type."}
+          {"name": "_schema", "type": "string", "description": "Name of the agent schema the state belongs to."},
+          {"name": "_updated", "type": "string", "description": "ISO-8601 timestamp of the last state update."}
         ]
       },
+      "examples": [
+        {
+          "description": "Dump all state as JSON (the default format).",
+          "invocation": "mx kv dump --format json",
+          "note": "Use --format compact for a single line per key. Beyond _schema and _updated, every key appears as a top-level property."
+        }
+      ],
       "errors": []
     }
   }

@@ -136,6 +136,71 @@ fn validate_invalid_manifest_json_reports_errors() {
     let _ = std::fs::remove_file(&bad);
 }
 
+/// A manifest with warnings but no errors must exit 0 (issue #8: "warnings ok").
+/// An `interactive: true` command with no `non_interactive_alternative` trips
+/// validation rule 5 (a warning), but produces no errors.
+fn warnings_only_manifest() -> &'static str {
+    r#"{
+        "name": "warns",
+        "bin": "warns",
+        "version": "0.1.0",
+        "description": "A manifest that emits a warning but no errors",
+        "commands": {
+            "login": {
+                "description": "Authenticate interactively",
+                "interactive": true
+            }
+        }
+    }"#
+}
+
+#[test]
+fn validate_warnings_only_manifest_exits_zero() {
+    let warns = temp_file("warns", warnings_only_manifest());
+
+    let out = run(&["validate", warns.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "warnings-only manifest must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The warning is surfaced...
+    assert!(stdout.contains("warning"), "stdout was: {stdout}");
+    assert!(
+        stdout.contains("non_interactive_alternative"),
+        "the rule-5 warning text must appear; stdout was: {stdout}"
+    );
+    // ...and the manifest is still reported valid.
+    assert!(stdout.contains("is valid"), "stdout was: {stdout}");
+
+    let _ = std::fs::remove_file(&warns);
+}
+
+#[test]
+fn validate_warnings_only_manifest_json_reports_ok_with_warnings() {
+    let warns = temp_file("warns-json", warnings_only_manifest());
+
+    let out = run(&["--json", "validate", warns.to_str().unwrap()]);
+    assert!(out.status.success(), "warnings-only manifest must exit 0");
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("validate --json emits JSON");
+    assert_eq!(value["ok"], serde_json::Value::Bool(true));
+    assert_eq!(
+        value["errors"].as_array().unwrap().len(),
+        0,
+        "warnings-only manifest must report zero errors"
+    );
+    assert!(
+        !value["warnings"].as_array().unwrap().is_empty(),
+        "warnings-only manifest must report at least one warning"
+    );
+
+    let _ = std::fs::remove_file(&warns);
+}
+
 #[test]
 fn validate_missing_file_is_clean_error_not_panic() {
     let out = run(&["validate", "/definitely/not/a/real/path.json"]);
