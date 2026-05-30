@@ -55,9 +55,15 @@ This solves the fundamental tension: the manifest must be **complete** enough fo
 
 ### Top-Level Structure
 
+The schema is currently hosted on GitHub Pages at
+`https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json` (base
+`https://tsukai-mcp.github.io/tsukai-static/`) as an interim measure. It will
+move to the canonical `https://tsukai.yaoyorozu.industries/manifest/v1.json`
+domain later (tracking #22).
+
 ```json
 {
-  "$schema": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
+  "$schema": "https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json",
   "name": "tool-name",
   "bin": "binary-name",
   "version": "0.1.0",

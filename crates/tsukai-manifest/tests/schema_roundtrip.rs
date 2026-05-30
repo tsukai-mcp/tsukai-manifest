@@ -8,7 +8,7 @@
 //! serialization is lossless.
 //!
 //! The generated schema carries a canonical `$id`
-//! (`https://tsukai.yaoyorozu.industries/manifest/v1.json`) which does not
+//! (`https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json`) which does not
 //! resolve over the network. We therefore build the validator directly from the
 //! schema value with `jsonschema::validator_for`, which compiles the document
 //! in place without attempting remote `$ref`/`$id` resolution.

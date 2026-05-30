@@ -488,12 +488,12 @@
       "type": "object"
     }
   },
-  "$id": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
+  "$id": "https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Top-level manifest describing a CLI tool.\n\nThis is the canonical representation that tool authors write and that the\ntsukai bridge reads to generate MCP tool definitions. It contains everything\nneeded to understand a tool's commands, arguments, output shapes, mutation\nsemantics, error taxonomy, and recommended workflows.\n\n# Forward Compatibility\n\nThis struct intentionally does **not** use `#[serde(deny_unknown_fields)]`.\nOlder parsers reading a newer manifest version will silently ignore fields\nthey don't recognize rather than failing to deserialize. This is a deliberate\ndesign choice — not an omission — so that manifest authors can adopt new\nschema features without breaking consumers that haven't upgraded yet.",
   "properties": {
     "$schema": {
-      "description": "JSON Schema URI for this manifest version (e.g.\n`\"https://tsukai.yaoyorozu.industries/manifest/v1.json\"`).",
+      "description": "JSON Schema URI for this manifest version (e.g.\n`\"https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json\"`).",
       "type": [
         "string",
         "null"

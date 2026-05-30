@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::Manifest;
 
 /// The canonical `$id` for the v1 manifest schema.
-pub const SCHEMA_ID: &str = "https://tsukai.yaoyorozu.industries/manifest/v1.json";
+pub const SCHEMA_ID: &str = "https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json";
 
 /// Generate the JSON Schema for [`Manifest`] as a [`serde_json::Value`].
 ///
