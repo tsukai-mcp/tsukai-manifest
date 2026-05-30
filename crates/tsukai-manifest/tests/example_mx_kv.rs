@@ -96,6 +96,19 @@ fn mx_kv_example_exercises_mutation_markers() {
 }
 
 #[test]
+fn mx_kv_track_history_renders_ordered_flag() {
+    // Issue #25 regression: the track-history pathway must compress to the
+    // ordered invocation with the flag rendered as `--count 5`, not the old
+    // BTreeMap-reordered `last <KEY> 5`.
+    let manifest = load();
+    let t1 = project_tier1(&manifest);
+    assert_eq!(
+        t1.pathways["track-history"],
+        "push <KEY> <VALUE> -> last <KEY> --count 5"
+    );
+}
+
+#[test]
 fn mx_kv_example_carries_worked_examples() {
     // Issue #18 field: at least one command must demonstrate `examples`.
     let manifest = load();

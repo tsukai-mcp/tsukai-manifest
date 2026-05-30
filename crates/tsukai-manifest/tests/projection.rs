@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use semver::Version;
 use tsukai_manifest::{
     AgentConfig, Arg, Command, ErrorDef, Example, Flag, Manifest, OutputField, OutputSchema,
-    Pathway, PathwayStep, Tiers, estimate_tokens, project_tier0, project_tier1,
+    Pathway, PathwayArg, PathwayStep, Tiers, estimate_tokens, project_tier0, project_tier1,
     project_tier2_command,
 };
 
@@ -38,12 +38,15 @@ fn rich_manifest() -> Manifest {
                 steps: vec![
                     PathwayStep {
                         command: "list".to_string(),
-                        args: BTreeMap::new(),
+                        args: vec![],
                         note: None,
                     },
                     PathwayStep {
                         command: "get".to_string(),
-                        args: BTreeMap::from([("key".to_string(), "<KEY>".to_string())]),
+                        args: vec![PathwayArg::Positional {
+                            name: "key".to_string(),
+                            value: "<KEY>".to_string(),
+                        }],
                         note: None,
                     },
                 ],
@@ -55,12 +58,18 @@ fn rich_manifest() -> Manifest {
                 steps: vec![
                     PathwayStep {
                         command: "pr.create".to_string(),
-                        args: BTreeMap::from([("title".to_string(), "<TITLE>".to_string())]),
+                        args: vec![PathwayArg::Positional {
+                            name: "title".to_string(),
+                            value: "<TITLE>".to_string(),
+                        }],
                         note: None,
                     },
                     PathwayStep {
                         command: "pr.view".to_string(),
-                        args: BTreeMap::from([("number".to_string(), "<NUMBER>".to_string())]),
+                        args: vec![PathwayArg::Positional {
+                            name: "number".to_string(),
+                            value: "<NUMBER>".to_string(),
+                        }],
                         note: None,
                     },
                 ],
@@ -550,6 +559,69 @@ fn tier1_pathway_compression() {
         t1.pathways["create-pr"],
         "pr.create <TITLE> -> pr.view <NUMBER>"
     );
+}
+
+/// Regression guard for issue #25: a step that mixes a positional and a flag
+/// must render the positional first, then the flag as `--name value`, in the
+/// order the author declared them. The original BTreeMap-based implementation
+/// silently reordered args alphabetically and dropped flag names entirely;
+/// every prior pathway test used only single-arg steps and so never caught it.
+#[test]
+fn tier1_pathway_compression_renders_ordered_positional_then_flag() {
+    let mut manifest = rich_manifest();
+
+    // `get` declares a positional `key` and a flag `--id`.
+    manifest.pathways = vec![Pathway {
+        name: "lookup".to_string(),
+        description: "Look up a specific entry".to_string(),
+        prerequisites: vec![],
+        steps: vec![PathwayStep {
+            command: "get".to_string(),
+            args: vec![
+                PathwayArg::Positional {
+                    name: "key".to_string(),
+                    value: "<KEY>".to_string(),
+                },
+                PathwayArg::Flag {
+                    name: "--id".to_string(),
+                    value: Some("35".to_string()),
+                },
+            ],
+            note: None,
+        }],
+    }];
+
+    let t1 = project_tier1(&manifest);
+    assert_eq!(t1.pathways["lookup"], "get <KEY> --id 35");
+}
+
+/// A flag with no value renders bare (e.g. `--json`), with no trailing space.
+#[test]
+fn tier1_pathway_compression_renders_bare_flag() {
+    let mut manifest = rich_manifest();
+
+    manifest.pathways = vec![Pathway {
+        name: "lookup-json".to_string(),
+        description: "Look up a value as JSON".to_string(),
+        prerequisites: vec![],
+        steps: vec![PathwayStep {
+            command: "pr.view".to_string(),
+            args: vec![
+                PathwayArg::Positional {
+                    name: "number".to_string(),
+                    value: "<NUMBER>".to_string(),
+                },
+                PathwayArg::Flag {
+                    name: "--json".to_string(),
+                    value: None,
+                },
+            ],
+            note: None,
+        }],
+    }];
+
+    let t1 = project_tier1(&manifest);
+    assert_eq!(t1.pathways["lookup-json"], "pr.view <NUMBER> --json");
 }
 
 #[test]

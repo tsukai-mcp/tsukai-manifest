@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::{Command, Example, Manifest, OutputSchema};
+use crate::manifest::{Command, Example, Manifest, OutputSchema, PathwayArg};
 
 // ---------------------------------------------------------------------------
 // Tier 0 — Discovery
@@ -286,9 +286,9 @@ pub fn project_tier1(manifest: &Manifest) -> Tier1 {
     }
 
     // Compress each pathway into a single string of the form
-    // "cmd1 ARG1 ARG2 -> cmd2 ARG1". Note: args appear in BTreeMap key
-    // order (alphabetical), not insertion order, because PathwayStep.args
-    // is a BTreeMap.
+    // "cmd1 <ARG1> --flag VAL -> cmd2 <ARG1>". Args render in invocation
+    // order: positionals as their bare value, flags as their name followed
+    // by a space and value (or bare when the flag carries no value).
     let pathways = manifest
         .pathways
         .iter()
@@ -298,9 +298,21 @@ pub fn project_tier1(manifest: &Manifest) -> Tier1 {
                 .iter()
                 .map(|step| {
                     let mut s = step.command.clone();
-                    for v in step.args.values() {
-                        s.push(' ');
-                        s.push_str(v);
+                    for arg in &step.args {
+                        match arg {
+                            PathwayArg::Positional { value, .. } => {
+                                s.push(' ');
+                                s.push_str(value);
+                            }
+                            PathwayArg::Flag { name, value } => {
+                                s.push(' ');
+                                s.push_str(name);
+                                if let Some(value) = value {
+                                    s.push(' ');
+                                    s.push_str(value);
+                                }
+                            }
+                        }
                     }
                     s
                 })

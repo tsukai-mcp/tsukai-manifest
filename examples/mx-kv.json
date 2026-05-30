@@ -36,7 +36,7 @@
       "prerequisites": [],
       "steps": [
         {"command": "keys", "note": "List every defined key with its type."},
-        {"command": "get", "args": {"key": "<KEY>"}, "note": "Read the current value of a string/counter/state key."}
+        {"command": "get", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}], "note": "Read the current value of a string/counter/state key."}
       ]
     },
     {
@@ -44,8 +44,8 @@
       "description": "Append an entry to a history/list key and read the most recent entries back.",
       "prerequisites": [],
       "steps": [
-        {"command": "push", "args": {"key": "<KEY>", "value": "<VALUE>"}, "note": "Append a timestamped entry (use --create history to auto-create the key)."},
-        {"command": "last", "args": {"key": "<KEY>", "count": "5"}, "note": "Read the last N entries to confirm the append."}
+        {"command": "push", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}, {"kind": "positional", "name": "value", "value": "<VALUE>"}], "note": "Append a timestamped entry (use --create history to auto-create the key)."},
+        {"command": "last", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}, {"kind": "flag", "name": "--count", "value": "5"}], "note": "Read the last N entries to confirm the append."}
       ]
     },
     {
@@ -53,8 +53,8 @@
       "description": "Read a counter, increment it, and read it back.",
       "prerequisites": [],
       "steps": [
-        {"command": "get", "args": {"key": "<KEY>"}, "note": "Read the current counter value."},
-        {"command": "inc", "args": {"key": "<KEY>"}, "note": "Increment the counter (use --by N for a larger step)."}
+        {"command": "get", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}], "note": "Read the current counter value."},
+        {"command": "inc", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}], "note": "Increment the counter (use --by N for a larger step)."}
       ]
     }
   ],
