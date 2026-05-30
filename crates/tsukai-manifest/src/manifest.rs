@@ -182,14 +182,29 @@ pub struct PathwayStep {
     /// Command name to invoke (must exist in the manifest's `commands` map).
     pub command: String,
 
-    /// Named arguments to pass. Keys are argument names, values are either
-    /// literal values or placeholders like `"<KEY>"`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub args: BTreeMap<String, String>,
+    /// Arguments to pass, in invocation order. Preserving order matters
+    /// because positional arguments are rendered by position and flags by
+    /// the sequence the author intended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<PathwayArg>,
 
     /// Optional human-readable note explaining this step's purpose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+/// A single argument token within a pathway step, in invocation order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PathwayArg {
+    /// A positional argument. Rendered as its value: `<KEY>`, `5`.
+    Positional { name: String, value: String },
+    /// A flag/option. Rendered as `--count 5`, or bare `--json` when value is None.
+    Flag {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+    },
 }
 
 /// A global error definition.
@@ -434,12 +449,15 @@ mod tests {
                 steps: vec![
                     PathwayStep {
                         command: "keys".to_string(),
-                        args: BTreeMap::new(),
+                        args: vec![],
                         note: Some("List all defined keys with types".to_string()),
                     },
                     PathwayStep {
                         command: "get".to_string(),
-                        args: BTreeMap::from([("key".to_string(), "<KEY>".to_string())]),
+                        args: vec![PathwayArg::Positional {
+                            name: "key".to_string(),
+                            value: "<KEY>".to_string(),
+                        }],
                         note: Some("Get current value".to_string()),
                     },
                 ],

@@ -121,17 +121,25 @@ The bridge loads Tier 0 (discovery) for all tools, promotes to Tier 1 (core comm
 {
   "pathways": [
     {
-      "name": "check-state",
-      "description": "See what keys exist and get a value",
+      "name": "track-history",
+      "description": "Append an entry to a history key and read it back",
       "prerequisites": [],
       "steps": [
-        {"command": "keys", "note": "List all defined keys with types"},
-        {"command": "get", "args": {"key": "<KEY>"}, "note": "Get current value"}
+        {"command": "push", "args": [
+          {"kind": "positional", "name": "key", "value": "<KEY>"},
+          {"kind": "positional", "name": "value", "value": "<VALUE>"}
+        ], "note": "Append a timestamped entry"},
+        {"command": "last", "args": [
+          {"kind": "positional", "name": "key", "value": "<KEY>"},
+          {"kind": "flag", "name": "--count", "value": "5"}
+        ], "note": "Read the last N entries to confirm"}
       ]
     }
   ]
 }
 ```
+
+`args` is an **ordered array** of tagged tokens, not a map — invocation order is significant. Each token is either a `positional` (rendered as its bare `value`, e.g. `<KEY>`) or a `flag` (rendered as `name` followed by `value`, e.g. `--count 5`; a flag with no `value` renders bare, e.g. `--json`). A `positional.name` must match one of the command's `args[].name`, and a `flag.name` must match one of the command's `flags[].name` (flag names carry their `--` prefix); validation rejects references to args/flags the command does not declare.
 
 Pathways encode expert knowledge. Instead of the agent discovering through trial and error that `gh pr view <number> --json state,mergeable,reviewDecision,statusCheckRollup` is the way to check PR status, the manifest declares it as a pathway. One lookup replaces 3-4 exploratory calls.
 
@@ -283,7 +291,7 @@ omitted otherwise. The bare name is therefore not duplicated in the top-level
   },
   "pathways": {
     "check-state": "keys -> get <KEY>",
-    "track-history": "push <KEY> <VALUE> -> last <KEY> 5"
+    "track-history": "push <KEY> <VALUE> -> last <KEY> --count 5"
   },
   "errors": ["not_found", "type_mismatch", "connection (retryable)"]
 }

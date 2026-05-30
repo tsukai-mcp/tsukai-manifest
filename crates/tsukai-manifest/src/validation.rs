@@ -20,6 +20,7 @@
 use std::collections::HashSet;
 
 use crate::Manifest;
+use crate::manifest::PathwayArg;
 
 /// A semantic validation error — a hard failure that must be fixed.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +105,7 @@ pub fn validate(manifest: &Manifest) -> ValidationResult {
     validate_interactive_consistency(manifest, &mut result);
     validate_destructive_implies_mutating(manifest, &mut result);
     validate_pathway_step_references(manifest, &mut result);
+    validate_pathway_step_arg_references(manifest, &mut result);
     validate_no_duplicate_arg_flag_names(manifest, &mut result);
     validate_self_command_groups(manifest, &mut result);
     // Rule 9 (valid semver) is enforced by the type system: `Manifest.version`
@@ -277,6 +279,53 @@ fn validate_pathway_step_references(manifest: &Manifest, result: &mut Validation
     }
 }
 
+/// Rule 7b: Each pathway step argument must reference an argument or flag that
+/// the step's command actually defines. A `Positional` arg name must match one
+/// of the command's `args[].name`; a `Flag` arg name must match one of the
+/// command's `flags[].name` (flag names carry their `--` prefix in both the
+/// pathway and the command definition). A pathway referencing a non-existent
+/// arg/flag is a real defect — it would render an invocation the tool cannot
+/// accept. Steps whose `command` does not exist are skipped here; Rule 7 already
+/// reports those.
+fn validate_pathway_step_arg_references(manifest: &Manifest, result: &mut ValidationResult) {
+    for (pi, pathway) in manifest.pathways.iter().enumerate() {
+        for (si, step) in pathway.steps.iter().enumerate() {
+            let Some(cmd) = manifest.commands.get(&step.command) else {
+                continue;
+            };
+
+            for (ai, arg) in step.args.iter().enumerate() {
+                match arg {
+                    PathwayArg::Positional { name, .. } => {
+                        if !cmd.args.iter().any(|a| a.name == *name) {
+                            result.errors.push(ValidationError {
+                                path: format!("pathways[{pi}].steps[{si}].args[{ai}]"),
+                                message: format!(
+                                    "pathway \"{}\" step \"{}\" passes positional argument \"{name}\" \
+                                     which is not declared in that command's args",
+                                    pathway.name, step.command
+                                ),
+                            });
+                        }
+                    }
+                    PathwayArg::Flag { name, .. } => {
+                        if !cmd.flags.iter().any(|f| f.name == *name) {
+                            result.errors.push(ValidationError {
+                                path: format!("pathways[{pi}].steps[{si}].args[{ai}]"),
+                                message: format!(
+                                    "pathway \"{}\" step \"{}\" passes flag \"{name}\" \
+                                     which is not declared in that command's flags",
+                                    pathway.name, step.command
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Rule 8: No duplicate arg or flag names within a single command.
 fn validate_no_duplicate_arg_flag_names(manifest: &Manifest, result: &mut ValidationResult) {
     for (cmd_name, cmd) in &manifest.commands {
@@ -334,7 +383,7 @@ mod tests {
     use semver::Version;
 
     use super::*;
-    use crate::{Arg, Command, ErrorDef, Flag, Manifest, Pathway, PathwayStep, Tiers};
+    use crate::{Arg, Command, ErrorDef, Flag, Manifest, Pathway, PathwayArg, PathwayStep, Tiers};
 
     /// Builds a minimal valid manifest that passes all validation rules.
     fn valid_manifest() -> Manifest {
@@ -359,12 +408,15 @@ mod tests {
                 steps: vec![
                     PathwayStep {
                         command: "get".to_string(),
-                        args: BTreeMap::new(),
+                        args: vec![PathwayArg::Positional {
+                            name: "key".to_string(),
+                            value: "<KEY>".to_string(),
+                        }],
                         note: None,
                     },
                     PathwayStep {
                         command: "set".to_string(),
-                        args: BTreeMap::new(),
+                        args: vec![],
                         note: None,
                     },
                 ],
@@ -674,7 +726,7 @@ mod tests {
         let mut m = valid_manifest();
         m.pathways[0].steps.push(PathwayStep {
             command: "vanished".to_string(),
-            args: BTreeMap::new(),
+            args: vec![],
             note: None,
         });
         let result = validate(&m);
@@ -685,6 +737,81 @@ mod tests {
             .find(|e| e.path.contains("pathways[0].steps[2].command"))
             .unwrap();
         assert!(err.message.contains("vanished"));
+    }
+
+    // ── Rule 7b: Pathway step arg references ─────────────────────────
+
+    #[test]
+    fn pathway_step_with_valid_positional_and_flag_passes() {
+        let mut m = valid_manifest();
+        // `get` declares arg `key` and flag `--json`.
+        m.pathways[0].steps[0].args = vec![
+            PathwayArg::Positional {
+                name: "key".to_string(),
+                value: "<KEY>".to_string(),
+            },
+            PathwayArg::Flag {
+                name: "--json".to_string(),
+                value: None,
+            },
+        ];
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+    }
+
+    #[test]
+    fn pathway_step_positional_referencing_unknown_arg_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "not_a_real_arg".to_string(),
+            value: "x".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path.contains("pathways[0].steps[0].args[0]"))
+            .unwrap();
+        assert!(err.message.contains("not_a_real_arg"));
+        assert!(err.message.contains("positional"));
+    }
+
+    #[test]
+    fn pathway_step_flag_referencing_unknown_flag_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].steps[0].args = vec![PathwayArg::Flag {
+            name: "--bogus".to_string(),
+            value: Some("1".to_string()),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path.contains("pathways[0].steps[0].args[0]"))
+            .unwrap();
+        assert!(err.message.contains("--bogus"));
+        assert!(err.message.contains("flag"));
+    }
+
+    #[test]
+    fn pathway_step_positional_name_must_not_match_a_flag() {
+        let mut m = valid_manifest();
+        // `--json` is a flag on `get`, not a positional arg. Using it as a
+        // positional must fail.
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "--json".to_string(),
+            value: "x".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path.contains("pathways[0].steps[0].args[0]"))
+            .unwrap();
+        assert!(err.message.contains("positional"));
     }
 
     // ── Rule 8: No duplicate arg/flag names ──────────────────────────
