@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Manifest {
     /// JSON Schema URI for this manifest version (e.g.
-    /// `"https://tsukai.yaoyorozu.industries/manifest/v1.json"`).
+    /// `"https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json"`).
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 
@@ -411,7 +411,7 @@ mod tests {
 
     fn minimal_manifest() -> Manifest {
         Manifest {
-            schema: Some("https://tsukai.yaoyorozu.industries/manifest/v1.json".to_string()),
+            schema: Some("https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json".to_string()),
             name: "mx-kv".to_string(),
             bin: "mx".to_string(),
             version: Version::new(0, 1, 0),
@@ -675,7 +675,7 @@ mod tests {
         // Wrap in a minimal valid manifest
         let full_json = format!(
             r#"{{
-  "$schema": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
+  "$schema": "https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json",
   "name": "mx-kv",
   "bin": "mx",
   "version": "0.1.0",

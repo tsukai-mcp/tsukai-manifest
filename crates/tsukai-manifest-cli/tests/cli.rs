@@ -330,7 +330,7 @@ fn schema_emits_valid_json_schema() {
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("schema emits JSON");
     assert_eq!(
         value["$id"],
-        "https://tsukai.yaoyorozu.industries/manifest/v1.json"
+        "https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json"
     );
     assert!(value["properties"].is_object());
 }

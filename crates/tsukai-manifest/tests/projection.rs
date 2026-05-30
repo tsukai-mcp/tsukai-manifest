@@ -13,7 +13,7 @@ use tsukai_manifest::{
 /// and interactive commands.
 fn rich_manifest() -> Manifest {
     Manifest {
-        schema: Some("https://tsukai.yaoyorozu.industries/manifest/v1.json".to_string()),
+        schema: Some("https://tsukai-mcp.github.io/tsukai-static/manifest/v1.json".to_string()),
         name: "test-tool".to_string(),
         bin: "tt".to_string(),
         version: Version::new(1, 0, 0),
