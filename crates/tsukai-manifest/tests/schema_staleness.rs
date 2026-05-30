@@ -13,7 +13,7 @@
 //! Or use the CLI:
 //!
 //! ```sh
-//! cargo run -p tsukai-manifest-cli -- generate-schema -o schemas/manifest.v1.json
+//! cargo run -p tsukai-manifest-cli -- schema -o schemas/manifest.v1.json
 //! ```
 
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ fn schema_not_stale() {
             "Failed to read {}: {e}\n\n\
              Hint: Generate the schema with:\n  \
              UPDATE_SCHEMA=1 cargo test -p tsukai-manifest schema_staleness\n  \
-             or: cargo run -p tsukai-manifest-cli -- generate-schema -o schemas/manifest.v1.json",
+             or: cargo run -p tsukai-manifest-cli -- schema -o schemas/manifest.v1.json",
             path.display()
         );
     });
@@ -68,7 +68,7 @@ fn schema_not_stale() {
              Generated:\n{}\n\n\
              To update, run:\n  \
              UPDATE_SCHEMA=1 cargo test -p tsukai-manifest schema_staleness\n  \
-             or: cargo run -p tsukai-manifest-cli -- generate-schema -o schemas/manifest.v1.json",
+             or: cargo run -p tsukai-manifest-cli -- schema -o schemas/manifest.v1.json",
             path.display(),
             serde_json::to_string_pretty(&on_disk_value).unwrap(),
             serde_json::to_string_pretty(&generated_value).unwrap(),

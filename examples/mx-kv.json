@@ -1,0 +1,507 @@
+{
+  "$schema": "https://tsukai.yaoyorozu.industries/manifest/v1.json",
+  "name": "mx-kv",
+  "bin": "mx",
+  "version": "0.1.184",
+  "description": "Local file-backed key-value store for 八百万重工 agents (string, counter, list, history, and state types).",
+  "base_command": ["mx", "kv"],
+
+  "agent": {
+    "output_modes": ["json"],
+    "default_output_flag": "--json",
+    "env_vars": {
+      "MX_CURRENT_AGENT": "Selects which agent's per-agent KV namespace is read or written.",
+      "MX_HOME": "Root of the mx data directory; the KV schema and data files live underneath it."
+    }
+  },
+
+  "context": {
+    "requires_network": false,
+    "requires_auth": false,
+    "requires_git_repo": false,
+    "requires_elevated": false,
+    "typical_environment": "any"
+  },
+
+  "tiers": {
+    "core": ["get", "set", "keys"],
+    "common": ["push", "last", "search"],
+    "extended": ["pop", "reset", "count", "random", "inc", "dec", "since", "remove", "dump"]
+  },
+
+  "pathways": [
+    {
+      "name": "check-state",
+      "description": "Discover which keys exist and read a current value.",
+      "prerequisites": [],
+      "steps": [
+        {"command": "keys", "note": "List every defined key with its type."},
+        {"command": "get", "args": {"key": "<KEY>"}, "note": "Read the current value of a string/counter/state key."}
+      ]
+    },
+    {
+      "name": "track-history",
+      "description": "Append an entry to a history/list key and read the most recent entries back.",
+      "prerequisites": [],
+      "steps": [
+        {"command": "push", "args": {"key": "<KEY>", "value": "<VALUE>"}, "note": "Append a timestamped entry (use --create history to auto-create the key)."},
+        {"command": "last", "args": {"key": "<KEY>", "count": "5"}, "note": "Read the last N entries to confirm the append."}
+      ]
+    },
+    {
+      "name": "adjust-counter",
+      "description": "Read a counter, increment it, and read it back.",
+      "prerequisites": [],
+      "steps": [
+        {"command": "get", "args": {"key": "<KEY>"}, "note": "Read the current counter value."},
+        {"command": "inc", "args": {"key": "<KEY>"}, "note": "Increment the counter (use --by N for a larger step)."}
+      ]
+    }
+  ],
+
+  "errors": [
+    {
+      "kind": "not_found",
+      "retryable": false,
+      "description": "The requested key, entry index, or hash does not exist.",
+      "resolution": "Run 'mx kv keys' to list valid keys, or push an entry with --create to auto-create the key."
+    },
+    {
+      "kind": "type_mismatch",
+      "retryable": false,
+      "description": "The operation is not valid for the key's type (e.g. 'inc' on a string, 'pop' on a history).",
+      "resolution": "Check the key's type with 'mx kv keys' and use a read/write verb that matches it."
+    },
+    {
+      "kind": "empty_key",
+      "retryable": false,
+      "description": "The key exists in the schema but has no data yet.",
+      "resolution": "Set or push a value before reading."
+    }
+  ],
+
+  "commands": {
+    "keys": {
+      "description": "List all defined keys and their types.",
+      "agent_description": "Enumerate every KV key with its type before reading or writing — the cheapest way to orient.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [],
+      "flags": [
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human table."}
+      ],
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {"name": "key", "type": "string", "description": "Key name."},
+            {"name": "type", "type": "string", "description": "Storage type.", "enum": ["string", "counter", "list", "history", "state"]}
+          ]
+        }
+      },
+      "examples": [
+        {
+          "description": "List all keys as JSON for parsing.",
+          "invocation": "mx kv keys --json",
+          "output": [
+            {"key": "焦点", "type": "string"},
+            {"key": "完了", "type": "history"}
+          ],
+          "note": "Always run this first when you do not already know a key's type."
+        }
+      ]
+    },
+
+    "get": {
+      "description": "Read the current value of a key.",
+      "agent_description": "Read a string/counter/state value, or a specific list/history entry via --id.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name to read."}
+      ],
+      "flags": [
+        {"name": "--id", "type": "string", "required": false, "description": "Entry index, range (35-64), or comma list (1,5,12) for list/history keys."},
+        {"name": "--memory", "type": "boolean", "required": false, "description": "Resolve a linked kn- memory reference into its full content."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human value."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The key that was read."},
+          {"name": "type", "type": "string", "description": "Storage type of the key.", "enum": ["string", "counter", "list", "history", "state"]},
+          {"name": "value", "type": "any", "description": "Current value (string, integer, JSON object, or array of entries)."}
+        ]
+      },
+      "examples": [
+        {
+          "description": "Read a string key and parse the JSON result.",
+          "invocation": "mx kv get 焦点 --json",
+          "output": {"key": "焦点", "type": "string", "value": "ship the manifest CLI"},
+          "note": "Prefer --json whenever the value will be parsed programmatically."
+        },
+        {
+          "description": "Read a range of history entries by index.",
+          "invocation": "mx kv get 完了 --id 35-40 --json",
+          "note": "Ranges and comma lists only apply to list and history keys."
+        }
+      ],
+      "errors": ["not_found", "empty_key"]
+    },
+
+    "set": {
+      "description": "Set a string/counter value, or a single field of a state key.",
+      "agent_description": "Write a string or counter value; for state keys pass FIELD then VALUE.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key name to write."},
+        {"name": "field_or_value", "type": "string", "required": true, "description": "For string/counter keys this is the value; for state keys this is the field name."},
+        {"name": "value", "type": "string", "required": false, "description": "The value, when setting a state key field (FIELD VALUE form)."}
+      ],
+      "flags": [
+        {"name": "--memory", "type": "string", "required": false, "description": "Link a kn- memory entry to this value."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The key that was written."},
+          {"name": "value", "type": "any", "description": "The new value."},
+          {"name": "previous", "type": "any", "description": "The prior value, if the key already existed."}
+        ]
+      },
+      "examples": [
+        {
+          "description": "Set a string key.",
+          "invocation": "mx kv set 焦点 \"ship the manifest CLI\"",
+          "note": "String and counter keys take a single VALUE argument."
+        },
+        {
+          "description": "Set one field of a state key.",
+          "invocation": "mx kv set deploy status green",
+          "note": "State keys take FIELD then VALUE; the key must already be of type state."
+        }
+      ],
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "inc": {
+      "description": "Increment a counter key.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Counter key to increment."}
+      ],
+      "flags": [
+        {"name": "--by", "type": "integer", "required": false, "description": "Step size to add.", "default": 1},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The counter key."},
+          {"name": "value", "type": "integer", "description": "The counter value after incrementing."}
+        ]
+      },
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "dec": {
+      "description": "Decrement a counter key.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Counter key to decrement."}
+      ],
+      "flags": [
+        {"name": "--by", "type": "integer", "required": false, "description": "Step size to subtract.", "default": 1},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The counter key."},
+          {"name": "value", "type": "integer", "description": "The counter value after decrementing."}
+        ]
+      },
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "push": {
+      "description": "Append an entry to a list or history key.",
+      "agent_description": "Append a value (optionally with structured --data) to a list/history; --create makes the key if missing.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to append to."},
+        {"name": "value", "type": "string", "required": true, "description": "The entry value."}
+      ],
+      "flags": [
+        {"name": "--data", "type": "string", "required": false, "description": "Structured JSON data attached to the entry."},
+        {"name": "--memory", "type": "string", "required": false, "description": "Link a kn- memory entry to this entry."},
+        {"name": "--create", "type": "string", "required": false, "description": "Auto-create the key with this type if it does not exist.", "enum": ["list", "history"]},
+        {"name": "--max-entries", "type": "integer", "required": false, "description": "Cap retained entries when creating the key (used with --create)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The key appended to."},
+          {"name": "id", "type": "integer", "description": "Index assigned to the new entry."},
+          {"name": "hash", "type": "string", "description": "Stable kv- hash of the new entry."}
+        ]
+      },
+      "examples": [
+        {
+          "description": "Append a finding to a history key, creating it if absent.",
+          "invocation": "mx kv push 知見 \"clippy denies all warnings in CI\" --create history",
+          "note": "Use --create the first time you write a key that is not yet in the schema."
+        }
+      ],
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "pop": {
+      "description": "Remove and return the last entry of a list key.",
+      "mutating": true,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List key to pop from."}
+      ],
+      "flags": [
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human value."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The list key."},
+          {"name": "value", "type": "any", "description": "The removed entry value."}
+        ]
+      },
+      "errors": ["not_found", "type_mismatch", "empty_key"]
+    },
+
+    "remove": {
+      "description": "Remove entries from a list or history key by index, hash, or matching substring.",
+      "agent_description": "Delete entries by --id (index or kv- hash) or by substring; add --all to remove every match.",
+      "mutating": true,
+      "destructive": true,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to remove from."},
+        {"name": "substring", "type": "string", "required": false, "description": "Substring to match for removal (omit when using --id)."}
+      ],
+      "flags": [
+        {"name": "--id", "type": "string", "required": false, "description": "Entry index or kv- hash to remove."},
+        {"name": "--all", "type": "boolean", "required": false, "description": "Remove every entry matching the substring, not just the first."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The key removed from."},
+          {"name": "removed", "type": "integer", "description": "Count of entries removed."}
+        ]
+      },
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "reset": {
+      "description": "Reset a key to its schema default, discarding all current data.",
+      "agent_description": "Destructive: clears a key back to its schema default. Irreversible — there is no undo.",
+      "mutating": true,
+      "destructive": true,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Key to reset."}
+      ],
+      "flags": [
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human confirmation."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The key that was reset."},
+          {"name": "type", "type": "string", "description": "Storage type of the key.", "enum": ["string", "counter", "list", "history", "state"]}
+        ]
+      },
+      "examples": [
+        {
+          "description": "Reset a list key back to empty.",
+          "invocation": "mx kv reset 案件",
+          "note": "Destructive and irreversible — confirm the key name before running."
+        }
+      ],
+      "errors": ["not_found"]
+    },
+
+    "last": {
+      "description": "Return the most recent entries of a list or history key.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to read."}
+      ],
+      "flags": [
+        {"name": "--count", "type": "integer", "required": false, "description": "Number of trailing entries to return.", "default": 1},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
+        {"name": "--since", "type": "string", "required": false, "description": "Only entries since a relative time (e.g. 30m, 1h, 7d, 2w)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+      ],
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "hash", "type": "string", "description": "Stable kv- entry hash."},
+            {"name": "value", "type": "string", "description": "Entry value."},
+            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+          ]
+        }
+      },
+      "errors": ["not_found", "type_mismatch", "empty_key"]
+    },
+
+    "since": {
+      "description": "Return entries recorded since a relative time or ISO-8601 timestamp.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "History or list key to read."},
+        {"name": "when", "type": "string", "required": true, "description": "Relative time (30m, 1h, 7d, 2w) or ISO-8601 timestamp."}
+      ],
+      "flags": [
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+      ],
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "value", "type": "string", "description": "Entry value."},
+            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+          ]
+        }
+      },
+      "errors": ["not_found", "type_mismatch", "empty_key"]
+    },
+
+    "search": {
+      "description": "Case-insensitive substring search over a list or history key.",
+      "agent_description": "Find entries whose value contains a query string; combine with --where and date filters.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to search."},
+        {"name": "query", "type": "string", "required": true, "description": "Substring to match (case-insensitive)."}
+      ],
+      "flags": [
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
+        {"name": "--since", "type": "string", "required": false, "description": "Only entries since a relative time (e.g. 30m, 1h, 7d, 2w)."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+      ],
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "value", "type": "string", "description": "Matching entry value."},
+            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+          ]
+        }
+      },
+      "examples": [
+        {
+          "description": "Search a history key for entries mentioning a topic.",
+          "invocation": "mx kv search 完了 \"manifest\" --json",
+          "note": "Matching is a plain case-insensitive substring test, not a regex."
+        }
+      ],
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "count": {
+      "description": "Count entries in a list or history key, optionally matching a substring.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to count."},
+        {"name": "filter", "type": "string", "required": false, "description": "Only count entries containing this substring."}
+      ],
+      "flags": [
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human count."}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "key", "type": "string", "description": "The counted key."},
+          {"name": "count", "type": "integer", "description": "Number of matching entries."}
+        ]
+      },
+      "errors": ["not_found", "type_mismatch"]
+    },
+
+    "random": {
+      "description": "Return random entries from a list or history key.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "List or history key to sample."}
+      ],
+      "flags": [
+        {"name": "--count", "type": "integer", "required": false, "description": "Number of random entries to return.", "default": 1},
+        {"name": "--where", "type": "string", "required": false, "description": "Filter by a structured data field (key=value); repeatable."},
+        {"name": "--json", "type": "boolean", "required": false, "description": "Emit JSON instead of the human listing."}
+      ],
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {"name": "id", "type": "integer", "description": "Entry index."},
+            {"name": "value", "type": "string", "description": "Entry value."},
+            {"name": "timestamp", "type": "string", "description": "ISO-8601 timestamp the entry was recorded."}
+          ]
+        }
+      },
+      "errors": ["not_found", "type_mismatch", "empty_key"]
+    },
+
+    "dump": {
+      "description": "Dump all KV state as JSON.",
+      "agent_description": "Read every key and value at once; use --format compact for one line per key.",
+      "mutating": false,
+      "destructive": false,
+      "interactive": false,
+      "args": [],
+      "flags": [
+        {"name": "--format", "type": "string", "required": false, "description": "Output layout.", "default": "pretty", "enum": ["pretty", "compact"]}
+      ],
+      "output": {
+        "type": "object",
+        "fields": [
+          {"name": "keys", "type": "any", "description": "Map of every key to its current value and type."}
+        ]
+      },
+      "errors": []
+    }
+  }
+}
