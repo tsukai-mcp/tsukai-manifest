@@ -380,15 +380,64 @@
       ],
       "type": "object"
     },
+    "PathwayArg": {
+      "description": "A single argument token within a pathway step, in invocation order.",
+      "oneOf": [
+        {
+          "description": "A positional argument. Rendered as its value: `<KEY>`, `5`.",
+          "properties": {
+            "kind": {
+              "const": "positional",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A flag/option. Rendered as `--count 5`, or bare `--json` when value is None.",
+          "properties": {
+            "kind": {
+              "const": "flag",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "PathwayStep": {
       "description": "A single step within a pathway.",
       "properties": {
         "args": {
-          "additionalProperties": {
-            "type": "string"
+          "description": "Arguments to pass, in invocation order. Preserving order matters\nbecause positional arguments are rendered by position and flags by\nthe sequence the author intended.",
+          "items": {
+            "$ref": "#/$defs/PathwayArg"
           },
-          "description": "Named arguments to pass. Keys are argument names, values are either\nliteral values or placeholders like `\"<KEY>\"`.",
-          "type": "object"
+          "type": "array"
         },
         "command": {
           "description": "Command name to invoke (must exist in the manifest's `commands` map).",

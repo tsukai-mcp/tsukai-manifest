@@ -12,7 +12,7 @@ pub mod validation;
 
 pub use manifest::{
     AgentConfig, Arg, Command, ContextRequirements, ErrorDef, Example, Flag, Manifest, OutputField,
-    OutputSchema, Pathway, PathwayStep, Tiers,
+    OutputSchema, Pathway, PathwayArg, PathwayStep, Tiers,
 };
 pub use projection::{
     CommandGroupSummary, CoreCommandSummary, ErrorDetail, Tier0, Tier1, Tier2Arg, Tier2Command,
