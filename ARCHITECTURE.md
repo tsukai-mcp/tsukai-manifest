@@ -47,7 +47,7 @@ Tool name, description, command groups with one-line descriptions. Loaded for ev
 The most important commands (defined by `tiers.core` in the manifest) with args, return types, and mutation flags. Promoted into context when the agent decides to use the tool.
 
 **Tier 2 — Extended (on-demand):**
-Full command details including all flags, output field descriptions, examples. Loaded per-command when the agent needs specifics.
+Full command details including all flags, output field descriptions, and worked examples (when present). Loaded per-command when the agent needs specifics.
 
 This solves the fundamental tension: the manifest must be **complete** enough for the bridge to generate correct MCP tools, but **compact** enough that the agent's context window isn't consumed by tool definitions alone.
 
@@ -152,6 +152,14 @@ Pathways encode expert knowledge. Instead of the agent discovering through trial
 **Command Naming Convention:**
 Keys use dot notation for subcommands: `"pr.view"`, `"memory.search"`, `"auth.login.web"`. The map stays flat regardless of nesting depth. The bridge reconstructs command groups from dot-separated prefixes when generating Tier 0 projections.
 
+A key MAY exist both as a bare leaf and as a group prefix — for example `"pr"`
+alongside `"pr.view"` and `"pr.merge"`. The bare entry is the **namespace-default
+command**: a runnable command on its own (cf. `git remote`, `gh pr`). In the
+Tier 0 projection the bare key is not listed as a top-level command; instead the
+corresponding group is flagged with `self_command: true` (see below). The
+validation layer emits an advisory warning for this overlap in case it was
+unintended, but it is valid.
+
 ```json
 {
   "commands": {
@@ -183,11 +191,36 @@ Keys use dot notation for subcommands: `"pr.view"`, `"memory.search"`, `"auth.lo
         ]
       },
 
+      "examples": [
+        {
+          "description": "Read a key and pretty-print the JSON value",
+          "invocation": "mx kv get deploy.target --json",
+          "output": {"key": "deploy.target", "type": "string", "value": "prod"},
+          "note": "Use --json when the value will be parsed by an agent."
+        }
+      ],
+
       "errors": ["not_found", "connection"]
     }
   }
 }
 ```
+
+#### Examples
+
+`examples` is an optional array of worked invocations — the single
+highest-value signal for an agent deciding how to call a command. Each entry
+carries:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `description` | yes | What the example demonstrates |
+| `invocation` | yes | The concrete, copy-runnable command (includes the `base_command` prefix) |
+| `output` | no | Illustrative result (any JSON value); the bridge may truncate large samples |
+| `note` | no | When to use this form — caveats, preconditions |
+
+Examples are emitted only at **Tier 2** (full command detail), and only **when
+present**. They never enter the Tier 0 or Tier 1 budget.
 
 #### Mutation Markers
 
@@ -221,7 +254,7 @@ If `interactive: true` and no `non_interactive_alternative` exists, the agent sh
   "groups": {
     "auth": {"description": "Authentication", "commands": ["login", "logout", "status", "token"]},
     "issue": {"description": "Issues", "commands": ["create", "list", "view", "close", "edit"]},
-    "pr": {"description": "Pull requests", "commands": ["create", "list", "view", "merge", "checkout"]},
+    "pr": {"description": "Pull requests", "commands": ["create", "list", "view", "merge", "checkout"], "self_command": true},
     "repo": {"description": "Repositories", "commands": ["clone", "create", "fork", "view"]},
     "api": {"description": "Raw API calls", "commands": ["<endpoint>"]}
   },
@@ -230,6 +263,12 @@ If `interactive: true` and no `non_interactive_alternative` exists, the agent sh
   "pathways": ["check-pr-status", "create-issue", "authenticate"]
 }
 ```
+
+`self_command: true` on a group means the group prefix is itself a runnable
+command (here, `gh pr` works in addition to `gh pr view`, `gh pr merge`, etc.).
+It is emitted only when a bare command shares a name with a group prefix, and is
+omitted otherwise. The bare name is therefore not duplicated in the top-level
+`commands` list.
 
 ### Tier 1 for `mx kv` (~600 tokens)
 

@@ -104,6 +104,13 @@
           },
           "type": "array"
         },
+        "examples": {
+          "description": "Worked invocation examples. Emitted at Tier 2. Optional.",
+          "items": {
+            "$ref": "#/$defs/Example"
+          },
+          "type": "array"
+        },
         "flags": {
           "description": "Flags (options) this command accepts.",
           "items": {
@@ -212,6 +219,34 @@
       "required": [
         "kind",
         "description"
+      ],
+      "type": "object"
+    },
+    "Example": {
+      "description": "A worked invocation example for a command.\n\nExamples are the single highest-value signal for an agent deciding how to\ncall a command: they show a concrete, assembled invocation and (optionally)\nwhat a successful result looks like. Emitted at Tier 2.",
+      "properties": {
+        "description": {
+          "description": "What this example demonstrates (e.g. \"Check a PR's merge readiness\").",
+          "type": "string"
+        },
+        "invocation": {
+          "description": "The concrete invocation, as the agent would run it. Includes the\nbase_command prefix so it is copy-runnable.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Optional note on when to use this form (caveats, preconditions).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "description": "Optional illustrative output. A JSON value when the command emits\nstructured output; the bridge may truncate large samples."
+        }
+      },
+      "required": [
+        "description",
+        "invocation"
       ],
       "type": "object"
     },

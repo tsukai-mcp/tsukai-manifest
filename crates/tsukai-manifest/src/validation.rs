@@ -105,6 +105,7 @@ pub fn validate(manifest: &Manifest) -> ValidationResult {
     validate_destructive_implies_mutating(manifest, &mut result);
     validate_pathway_step_references(manifest, &mut result);
     validate_no_duplicate_arg_flag_names(manifest, &mut result);
+    validate_self_command_groups(manifest, &mut result);
     // Rule 9 (valid semver) is enforced by the type system: `Manifest.version`
     // is `semver::Version`, which only deserializes valid semver strings.
     // See `test_version_enforced_by_type_system` below for confirmation.
@@ -301,6 +302,31 @@ fn validate_no_duplicate_arg_flag_names(manifest: &Manifest, result: &mut Valida
     }
 }
 
+/// Rule 10: A command name that is both a bare command and a group prefix
+/// (e.g. `remote` exists alongside `remote.add`) is valid — it becomes the
+/// group's namespace-default command (cf. `git remote`). Emit a warning, not
+/// an error, in case the overlap is unintended.
+fn validate_self_command_groups(manifest: &Manifest, result: &mut ValidationResult) {
+    let group_prefixes: HashSet<&str> = manifest
+        .commands
+        .keys()
+        .filter_map(|key| key.split_once('.').map(|(prefix, _)| prefix))
+        .collect();
+
+    for key in manifest.commands.keys() {
+        if !key.contains('.') && group_prefixes.contains(key.as_str()) {
+            result.warnings.push(ValidationWarning {
+                path: format!("commands.{key}"),
+                message: format!(
+                    "command \"{key}\" is both a bare command and a group prefix; this is valid \
+                     (it becomes the group's self_command, cf. `git remote`) but flagged in case \
+                     the overlap is unintended"
+                ),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -377,6 +403,7 @@ mod tests {
                         }],
                         prerequisites: vec![],
                         output: None,
+                        examples: vec![],
                         errors: vec!["not_found".to_string()],
                     },
                 ),
@@ -393,6 +420,7 @@ mod tests {
                         flags: vec![],
                         prerequisites: vec!["get".to_string()],
                         output: None,
+                        examples: vec![],
                         errors: vec![],
                     },
                 ),
@@ -409,6 +437,7 @@ mod tests {
                         flags: vec![],
                         prerequisites: vec![],
                         output: None,
+                        examples: vec![],
                         errors: vec![],
                     },
                 ),
@@ -817,6 +846,90 @@ mod tests {
             err.message.contains("listed more than once"),
             "within-tier duplicate should say 'listed more than once', got: {}",
             err.message
+        );
+    }
+
+    // ── Rule 10: self_command group overlap is a warning ────────────
+
+    #[test]
+    fn bare_command_matching_group_prefix_is_warning_not_error() {
+        let mut m = valid_manifest();
+        // `delete` already exists as a bare command. Add `delete.all` so
+        // `delete` is also a group prefix.
+        m.commands.insert(
+            "delete.all".to_string(),
+            Command {
+                description: "Delete everything".to_string(),
+                agent_description: None,
+                mutating: true,
+                destructive: true,
+                interactive: false,
+                non_interactive_alternative: None,
+                args: vec![],
+                flags: vec![],
+                prerequisites: vec![],
+                output: None,
+                examples: vec![],
+                errors: vec![],
+            },
+        );
+        // Keep tiers referentially valid by registering the new command.
+        m.tiers
+            .as_mut()
+            .unwrap()
+            .extended
+            .push("delete.all".to_string());
+
+        let result = validate(&m);
+        assert!(
+            result.is_valid(),
+            "self_command overlap must not be an error: {result}"
+        );
+        assert!(result.has_warnings());
+        let warn = result
+            .warnings
+            .iter()
+            .find(|w| w.path == "commands.delete")
+            .expect("expected a warning for the bare/group overlap");
+        assert!(warn.message.contains("self_command"));
+        assert!(warn.message.contains("git remote"));
+    }
+
+    #[test]
+    fn group_prefix_without_bare_command_no_warning() {
+        let mut m = valid_manifest();
+        // `issue.list` makes `issue` a group prefix, but there is no bare
+        // `issue` command, so no overlap warning should fire.
+        m.commands.insert(
+            "issue.list".to_string(),
+            Command {
+                description: "List issues".to_string(),
+                agent_description: None,
+                mutating: false,
+                destructive: false,
+                interactive: false,
+                non_interactive_alternative: None,
+                args: vec![],
+                flags: vec![],
+                prerequisites: vec![],
+                output: None,
+                examples: vec![],
+                errors: vec![],
+            },
+        );
+        m.tiers
+            .as_mut()
+            .unwrap()
+            .common
+            .push("issue.list".to_string());
+
+        let result = validate(&m);
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("self_command")),
+            "no self_command warning expected: {result}"
         );
     }
 
