@@ -36,6 +36,6 @@ jobs:
 
       # Pinned to a full sekisho commit SHA (never a tag) for supply-chain integrity.
       - name: Publish via sekisho gate
-        uses: tsukai-mcp/sekisho@d7d9786dc6ec12c765127815f500ee13521d3346 # sekisho main (no release tag yet)
+        uses: yaoyorozu-hi/sekisho@84f1f2fd4635457ca25291906cfd6a15381aaa4b # yaoyorozu-hi/sekisho main (no release tag yet)
         with:
           packages: "tsukai-manifest tsukai-manifest-cli"
