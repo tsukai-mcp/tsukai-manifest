@@ -1,10 +1,15 @@
 [package]
 name = "tsukai-manifest"
 version = "0.1.0"
-description = "Structured CLI manifest format for AI agent consumption via MCP"
+description = "Structured CLI manifest format for AI-agent consumption — typed model, JSON-schema generation, semantic validation, and tiered projections."
+keywords = ["manifest", "codegen", "parser", "config", "cli"]
+categories = ["parser-implementations", "development-tools", "config", "encoding"]
+readme = "README.md"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true
