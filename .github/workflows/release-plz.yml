@@ -1,0 +1,61 @@
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+# No id-token here: release-plz no longer publishes to crates.io. It only opens
+# the release PR and, on merge, creates the git tag + GitHub release. The tag
+# triggers publish.yml, which holds the OIDC publish capability.
+permissions: {}
+
+jobs:
+  release-plz-release:
+    name: release-plz release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the git tag + GitHub release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: rustup update stable
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+      - uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  release-plz-pr:
+    name: release-plz PR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: rustup update stable
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

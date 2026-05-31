@@ -1,0 +1,41 @@
+name: publish
+
+# This workflow filename (publish.yml) plus environment `release` is the trust
+# anchor registered on crates.io Trusted Publishing for tsukai-manifest and
+# tsukai-manifest-cli. crates.io matches the CALLER's workflow_ref + environment,
+# not job_workflow_ref, so this file — not sekisho — is what TP verifies.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  publish:
+    name: Publish crates
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # harden-runner MUST be the first step of the job (it is unreliable nested
+      # inside the sekisho composite action), so it lives here in the caller.
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+            token.actions.githubusercontent.com:443
+            crates.io:443
+            static.crates.io:443
+            index.crates.io:443
+            static.rust-lang.org:443
+
+      # Pinned to a full sekisho commit SHA (never a tag) for supply-chain integrity.
+      - name: Publish via sekisho gate
+        uses: tsukai-mcp/sekisho@d7d9786dc6ec12c765127815f500ee13521d3346 # sekisho main (no release tag yet)
+        with:
+          packages: "tsukai-manifest tsukai-manifest-cli"
