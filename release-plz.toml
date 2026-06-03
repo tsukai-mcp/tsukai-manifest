@@ -1,0 +1,19 @@
+[workspace]
+# release-plz creates the version PR, git tag, and GitHub release, but does NOT
+# run `cargo publish`. publish.yml (triggered by the tag) performs the publish
+# via the sekisho OIDC gate. publish/git_tag_enable/git_release_enable are
+# independent: publish=false disables only `cargo publish`, the tag + release
+# are still created (verified against release-plz docs).
+publish = false
+git_tag_enable = true
+git_release_enable = true
+dependencies_update = false
+changelog_update = true
+
+[[package]]
+name = "tsukai-manifest"
+version_group = "tsukai"
+
+[[package]]
+name = "tsukai-manifest-cli"
+version_group = "tsukai"
