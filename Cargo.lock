@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "tsukai-manifest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonschema",
  "schemars",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "tsukai-manifest-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde_json",
