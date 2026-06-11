@@ -201,6 +201,84 @@ fn validate_warnings_only_manifest_json_reports_ok_with_warnings() {
     let _ = std::fs::remove_file(&warns);
 }
 
+/// The issue-8 pathway rules (11/12c/12d/14) must surface end-to-end through
+/// the real loader: errors fail the exit code, warnings ride along.
+#[test]
+fn validate_pathway_rule_violations_surface_through_cli() {
+    let bad = temp_file(
+        "pathway-rules",
+        r#"{
+            "name": "t",
+            "bin": "t",
+            "version": "0.1.0",
+            "description": "t",
+            "pathways": [
+                {
+                    "name": "dup",
+                    "description": "ghost placeholder",
+                    "args": [
+                        {"name": "key", "type": "string", "required": true, "description": "k"}
+                    ],
+                    "steps": [
+                        {"command": "run", "args": [{"kind": "positional", "name": "input", "value": "<GHOST>"}]}
+                    ]
+                },
+                {"name": "dup", "description": "duplicate, zero steps", "steps": []}
+            ],
+            "commands": {
+                "run": {
+                    "description": "Run",
+                    "args": [
+                        {"name": "input", "type": "string", "required": true, "description": "in"}
+                    ]
+                }
+            }
+        }"#,
+    );
+
+    let out = run(&["--json", "validate", bad.to_str().unwrap()]);
+    assert!(
+        !out.status.success(),
+        "pathway rule errors must produce a non-zero exit"
+    );
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("validate --json emits JSON");
+    assert_eq!(value["ok"], serde_json::Value::Bool(false));
+
+    let errors = value["errors"].as_array().unwrap();
+    let error_text = errors
+        .iter()
+        .map(|e| e["message"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        error_text.contains("does not resolve"),
+        "rule 12c must surface: {error_text}"
+    );
+    assert!(
+        error_text.contains("duplicate pathway name"),
+        "rule 11 must surface: {error_text}"
+    );
+
+    let warnings = value["warnings"].as_array().unwrap();
+    let warning_text = warnings
+        .iter()
+        .map(|w| w["message"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        warning_text.contains("zero steps"),
+        "rule 14 must surface: {warning_text}"
+    );
+    assert!(
+        warning_text.contains("appears in no step"),
+        "rule 12d must surface: {warning_text}"
+    );
+
+    let _ = std::fs::remove_file(&bad);
+}
+
 #[test]
 fn validate_missing_file_is_clean_error_not_panic() {
     let out = run(&["validate", "/definitely/not/a/real/path.json"]);

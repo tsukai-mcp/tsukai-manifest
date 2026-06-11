@@ -34,6 +34,7 @@ fn rich_manifest() -> Manifest {
             Pathway {
                 name: "check-state".to_string(),
                 description: "Check current state".to_string(),
+                args: vec![],
                 prerequisites: vec![],
                 steps: vec![
                     PathwayStep {
@@ -54,6 +55,7 @@ fn rich_manifest() -> Manifest {
             Pathway {
                 name: "create-pr".to_string(),
                 description: "Create a pull request".to_string(),
+                args: vec![],
                 prerequisites: vec!["auth".to_string()],
                 steps: vec![
                     PathwayStep {
@@ -574,6 +576,7 @@ fn tier1_pathway_compression_renders_ordered_positional_then_flag() {
     manifest.pathways = vec![Pathway {
         name: "lookup".to_string(),
         description: "Look up a specific entry".to_string(),
+        args: vec![],
         prerequisites: vec![],
         steps: vec![PathwayStep {
             command: "get".to_string(),
@@ -603,6 +606,7 @@ fn tier1_pathway_compression_renders_bare_flag() {
     manifest.pathways = vec![Pathway {
         name: "lookup-json".to_string(),
         description: "Look up a value as JSON".to_string(),
+        args: vec![],
         prerequisites: vec![],
         steps: vec![PathwayStep {
             command: "pr.view".to_string(),

@@ -168,6 +168,15 @@ fn pathway_arg_variants_round_trip_through_schema() {
         pathways: vec![tsukai_manifest::Pathway {
             name: "p".to_string(),
             description: "p".to_string(),
+            args: vec![Arg {
+                name: "key".to_string(),
+                arg_type: "string".to_string(),
+                required: false,
+                description: "Key placeholder input".to_string(),
+                default: Some(json!("state")),
+                enum_values: Some(vec!["state".to_string(), "history".to_string()]),
+                constraints: None,
+            }],
             prerequisites: vec![],
             steps: vec![PathwayStep {
                 command: "get".to_string(),
