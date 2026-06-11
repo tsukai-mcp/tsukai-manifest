@@ -4,10 +4,18 @@ name: publish
 # anchor registered on crates.io Trusted Publishing for tsukai-manifest and
 # tsukai-manifest-cli. crates.io matches the CALLER's workflow_ref + environment,
 # not job_workflow_ref, so this file — not sekisho — is what TP verifies.
+#
+# release-plz (publish = false) versions both workspace crates in lockstep
+# (shared version_group "tsukai") and emits one per-package tag each:
+# `tsukai-manifest-v{version}` and `tsukai-manifest-cli-v{version}`. The single
+# job below publishes BOTH crates, so it must fire exactly once per release.
+# We trigger ONLY on the lib crate's tag (`tsukai-manifest-v*.*.*`); the glob's
+# leading literal `tsukai-manifest-v` does not match `tsukai-manifest-cli-v...`
+# (* never crosses into the `cli` segment), so the cli tag does not double-fire.
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "tsukai-manifest-v*.*.*"
 
 jobs:
   publish:
