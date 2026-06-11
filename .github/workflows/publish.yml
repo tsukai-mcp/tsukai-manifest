@@ -16,6 +16,16 @@ on:
   push:
     tags:
       - "tsukai-manifest-v*.*.*"
+  # Manual recovery path for partial publishes. sekisho checks out github.sha,
+  # so dispatch from a branch whose HEAD is the tagged release commit; the
+  # guard step below fails the run if the given tag points elsewhere.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Release tag to publish (e.g. tsukai-manifest-v0.2.0). Must point at
+          the commit this dispatch runs on.
+        required: true
 
 jobs:
   publish:
@@ -42,8 +52,53 @@ jobs:
             index.crates.io:443
             static.rust-lang.org:443
 
+      - name: Verify dispatched tag matches this commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # TAG is interpolated into the gh api path below. Validate it against
+          # the release-plz tag grammar BEFORE use: the GitHub API normalizes
+          # dot-segments, so an unvalidated value like `../heads/<branch>`
+          # resolves a branch ref and defeats this guard. Reject anything that
+          # is not a literal workspace release tag.
+          case "$TAG" in
+            */* | *..*)
+              echo "::error::refusing tag '${TAG}': must not contain '/' or '..'"
+              exit 1 ;;
+          esac
+          # Whole-string match: [[ =~ ]] anchors against the entire value, so
+          # `$` is end-of-string (not end-of-line). grep -E is line-based and
+          # would pass a multiline TAG whose first line is valid.
+          tag_re='^tsukai-manifest(-cli)?-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if ! [[ "$TAG" =~ $tag_re ]]; then
+            echo "::error::refusing tag '${TAG}': does not match release-tag" \
+              "pattern tsukai-manifest[-cli]-vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          if ! ref_object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object 2>/dev/null)"; then
+            echo "::error::tag '${TAG}' does not exist in ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+          obj_sha="$(jq -r .sha <<<"$ref_object")"
+          obj_type="$(jq -r .type <<<"$ref_object")"
+          if [ "$obj_type" = "tag" ]; then
+            obj_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${obj_sha}" --jq .object.sha)"
+          fi
+          if [ "$obj_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag ${TAG} points at ${obj_sha}, but this dispatch" \
+              "runs at ${GITHUB_SHA}; dispatch from a branch whose HEAD is" \
+              "the tagged release commit"
+            exit 1
+          fi
+          echo "Tag ${TAG} matches ${GITHUB_SHA}; publishing."
+
       # Pinned to a full sekisho commit SHA (never a tag) for supply-chain integrity.
       - name: Publish via sekisho gate
-        uses: yaoyorozu-hi/sekisho@84f1f2fd4635457ca25291906cfd6a15381aaa4b # yaoyorozu-hi/sekisho main (no release tag yet)
+        uses: yaoyorozu-hi/sekisho@84ceabd061332fa9baf0b929c6fca608cb2e45b6 # yaoyorozu-hi/sekisho main (loop-clobber + idempotency fix)
         with:
           packages: "tsukai-manifest tsukai-manifest-cli"
