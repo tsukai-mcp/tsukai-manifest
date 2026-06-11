@@ -33,6 +33,9 @@
     {
       "name": "check-state",
       "description": "Discover which keys exist and read a current value.",
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Name of the key to read after listing the schema."}
+      ],
       "prerequisites": [],
       "steps": [
         {"command": "keys", "note": "List every defined key with its type."},
@@ -42,6 +45,10 @@
     {
       "name": "track-history",
       "description": "Append an entry to a history/list key and read the most recent entries back.",
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Name of the history/list key to append to and read back."},
+        {"name": "value", "type": "string", "required": true, "description": "Entry text to append to the key."}
+      ],
       "prerequisites": [],
       "steps": [
         {"command": "push", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}, {"kind": "positional", "name": "value", "value": "<VALUE>"}], "note": "Append a timestamped entry (use --create history to auto-create the key)."},
@@ -51,6 +58,9 @@
     {
       "name": "adjust-counter",
       "description": "Read a counter, increment it, and read it back.",
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "Name of the counter key to read and increment."}
+      ],
       "prerequisites": [],
       "steps": [
         {"command": "get", "args": [{"kind": "positional", "name": "key", "value": "<KEY>"}], "note": "Read the current counter value."},

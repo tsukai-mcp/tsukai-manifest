@@ -348,8 +348,15 @@
       "type": "object"
     },
     "Pathway": {
-      "description": "A common workflow encoded as a sequence of steps.\n\nPathways capture expert knowledge about how to accomplish a task with the\ntool. Instead of the agent discovering through trial and error, the\nmanifest declares the optimal sequence.",
+      "description": "A common workflow encoded as a sequence of steps.\n\nPathways capture expert knowledge about how to accomplish a task with the\ntool. Instead of the agent discovering through trial and error, the\nmanifest declares the optimal sequence.\n\nA pathway may declare input parameters in `args`. Each declared arg's\nplaceholder (`<NAME>`, matched case-insensitively) may appear inside step\narg values and is substituted by the bridge at call time.",
       "properties": {
+        "args": {
+          "description": "Input parameters this pathway accepts. Each arg's placeholder\n(`<NAME>`, matched case-insensitively) may appear inside step arg\nvalues and is substituted by the bridge at call time.",
+          "items": {
+            "$ref": "#/$defs/Arg"
+          },
+          "type": "array"
+        },
         "description": {
           "description": "Human-readable description of what this pathway accomplishes.",
           "type": "string"
@@ -555,7 +562,7 @@
       "type": "string"
     },
     "pathways": {
-      "description": "Common workflows encoded as step-by-step pathways.",
+      "description": "Common workflows encoded as step-by-step pathways. A pathway may\ndeclare input parameters in `args` whose placeholders (`<NAME>`,\nmatched case-insensitively) appear in step arg values and are\nsubstituted by the bridge at call time.",
       "items": {
         "$ref": "#/$defs/Pathway"
       },

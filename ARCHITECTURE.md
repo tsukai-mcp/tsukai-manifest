@@ -129,6 +129,10 @@ The bridge loads Tier 0 (discovery) for all tools, promotes to Tier 1 (core comm
     {
       "name": "track-history",
       "description": "Append an entry to a history key and read it back",
+      "args": [
+        {"name": "key", "type": "string", "required": true, "description": "History key to append to"},
+        {"name": "value", "type": "string", "required": true, "description": "Entry text to append"}
+      ],
       "prerequisites": [],
       "steps": [
         {"command": "push", "args": [
@@ -145,7 +149,9 @@ The bridge loads Tier 0 (discovery) for all tools, promotes to Tier 1 (core comm
 }
 ```
 
-`args` is an **ordered array** of tagged tokens, not a map — invocation order is significant. Each token is either a `positional` (rendered as its bare `value`, e.g. `<KEY>`) or a `flag` (rendered as `name` followed by `value`, e.g. `--count 5`; a flag with no `value` renders bare, e.g. `--json`). A `positional.name` must match one of the command's `args[].name`, and a `flag.name` must match one of the command's `flags[].name` (flag names carry their `--` prefix); validation rejects references to args/flags the command does not declare.
+A pathway's top-level `args` declares the **input parameters** the pathway accepts, using the same shape as command args (name, type, required, default, enum, constraints, description). Each declared arg binds a **placeholder** — a maximal `<ident>` token where `ident` matches `[A-Za-z0-9_][A-Za-z0-9_-]*` — that may appear inside step arg values and is substituted by the bridge at call time. Placeholders resolve to declared args by case-insensitive name match (`<KEY>` resolves to the arg named `key`). Validation enforces: arg names unique case-insensitively within a pathway; an optional arg (`required: false`) must carry a `default` (substitution is total); when `args` is non-empty, every placeholder in step values must resolve to a declared arg; and every arg name must itself match the ident grammar `[A-Za-z0-9_][A-Za-z0-9_-]*` — a name outside it could never be referenced by any placeholder, so the bridge would advertise an input that structurally never reaches any step. A declared arg whose placeholder appears in no step, or placeholder-shaped tokens in a pathway that declares no `args`, draw warnings (an arg already rejected for its name is not additionally reported as unused).
+
+A step's `args` is an **ordered array** of tagged tokens, not a map — invocation order is significant. Each token is either a `positional` (rendered as its bare `value`, e.g. `<KEY>`) or a `flag` (rendered as `name` followed by `value`, e.g. `--count 5`; a flag with no `value` renders bare, e.g. `--json`). A `positional.name` must match one of the command's `args[].name`, and a `flag.name` must match one of the command's `flags[].name` (flag names carry their `--` prefix); validation rejects references to args/flags the command does not declare.
 
 Pathways encode expert knowledge. Instead of the agent discovering through trial and error that `gh pr view <number> --json state,mergeable,reviewDecision,statusCheckRollup` is the way to check PR status, the manifest declares it as a pathway. One lookup replaces 3-4 exploratory calls.
 

@@ -66,7 +66,10 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tiers: Option<Tiers>,
 
-    /// Common workflows encoded as step-by-step pathways.
+    /// Common workflows encoded as step-by-step pathways. A pathway may
+    /// declare input parameters in `args` whose placeholders (`<NAME>`,
+    /// matched case-insensitively) appear in step arg values and are
+    /// substituted by the bridge at call time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pathways: Vec<Pathway>,
 
@@ -160,6 +163,10 @@ pub struct Tiers {
 /// Pathways capture expert knowledge about how to accomplish a task with the
 /// tool. Instead of the agent discovering through trial and error, the
 /// manifest declares the optimal sequence.
+///
+/// A pathway may declare input parameters in `args`. Each declared arg's
+/// placeholder (`<NAME>`, matched case-insensitively) may appear inside step
+/// arg values and is substituted by the bridge at call time.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Pathway {
     /// Pathway identifier (e.g. "check-state", "create-and-push").
@@ -167,6 +174,12 @@ pub struct Pathway {
 
     /// Human-readable description of what this pathway accomplishes.
     pub description: String,
+
+    /// Input parameters this pathway accepts. Each arg's placeholder
+    /// (`<NAME>`, matched case-insensitively) may appear inside step arg
+    /// values and is substituted by the bridge at call time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<Arg>,
 
     /// Commands or conditions that must be satisfied before starting.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -445,6 +458,15 @@ mod tests {
             pathways: vec![Pathway {
                 name: "check-state".to_string(),
                 description: "See what keys exist and get a value".to_string(),
+                args: vec![Arg {
+                    name: "key".to_string(),
+                    arg_type: "string".to_string(),
+                    required: true,
+                    description: "Key to read".to_string(),
+                    default: None,
+                    enum_values: None,
+                    constraints: None,
+                }],
                 prerequisites: vec![],
                 steps: vec![
                     PathwayStep {
@@ -589,6 +611,34 @@ mod tests {
         assert!(!json.contains("pathways"));
         assert!(!json.contains("errors"));
         assert!(!json.contains("commands"));
+    }
+
+    #[test]
+    fn pathway_args_round_trip() {
+        let manifest = minimal_manifest();
+        let value = serde_json::to_value(&manifest).expect("serialize");
+        assert_eq!(value["pathways"][0]["args"][0]["name"], "key");
+        assert_eq!(value["pathways"][0]["args"][0]["type"], "string");
+
+        let deserialized: Manifest = serde_json::from_value(value).expect("deserialize");
+        assert_eq!(manifest.pathways[0].args, deserialized.pathways[0].args);
+    }
+
+    #[test]
+    fn pathway_empty_args_omitted_from_json() {
+        let pathway = Pathway {
+            name: "p".to_string(),
+            description: "d".to_string(),
+            args: vec![],
+            prerequisites: vec![],
+            steps: vec![],
+        };
+
+        let json = serde_json::to_string(&pathway).expect("serialize");
+        assert!(!json.contains("args"), "empty args must be omitted: {json}");
+
+        let deserialized: Pathway = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pathway, deserialized);
     }
 
     #[test]

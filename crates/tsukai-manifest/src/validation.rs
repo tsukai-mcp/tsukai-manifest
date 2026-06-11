@@ -108,6 +108,9 @@ pub fn validate(manifest: &Manifest) -> ValidationResult {
     validate_pathway_step_arg_references(manifest, &mut result);
     validate_no_duplicate_arg_flag_names(manifest, &mut result);
     validate_self_command_groups(manifest, &mut result);
+    validate_pathway_names(manifest, &mut result);
+    validate_pathway_args(manifest, &mut result);
+    validate_pathway_has_steps(manifest, &mut result);
     // Rule 9 (valid semver) is enforced by the type system: `Manifest.version`
     // is `semver::Version`, which only deserializes valid semver strings.
     // See `test_version_enforced_by_type_system` below for confirmation.
@@ -376,6 +379,238 @@ fn validate_self_command_groups(manifest: &Manifest, result: &mut ValidationResu
     }
 }
 
+/// Rules 11 and 13: pathway name integrity.
+///
+/// Rule 11 (error): pathway names must be unique across `pathways`.
+/// Rule 13 (warning): a pathway name should match
+/// `^[A-Za-z0-9][A-Za-z0-9_-]*$` — bridges derive tool names from pathway
+/// names and may skip pathways whose names fall outside this charset.
+fn validate_pathway_names(manifest: &Manifest, result: &mut ValidationResult) {
+    let mut seen: HashSet<&str> = HashSet::new();
+
+    for (pi, pathway) in manifest.pathways.iter().enumerate() {
+        if !seen.insert(pathway.name.as_str()) {
+            result.errors.push(ValidationError {
+                path: format!("pathways[{pi}].name"),
+                message: format!("duplicate pathway name \"{}\"", pathway.name),
+            });
+        }
+
+        if !pathway_name_is_well_formed(&pathway.name) {
+            result.warnings.push(ValidationWarning {
+                path: format!("pathways[{pi}].name"),
+                message: format!(
+                    "pathway name \"{}\" does not match ^[A-Za-z0-9][A-Za-z0-9_-]*$ — bridges \
+                     may skip it when deriving tool names",
+                    pathway.name
+                ),
+            });
+        }
+    }
+}
+
+fn pathway_name_is_well_formed(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Rules 12a–12f: pathway arg declarations and placeholder integrity.
+///
+/// A placeholder is a maximal substring `<ident>` where `ident` matches
+/// `[A-Za-z0-9_][A-Za-z0-9_-]*`; it resolves to a declared pathway arg by
+/// case-insensitive name match. Substitution by the bridge must be total, so:
+///
+/// - 12a (error): arg names must be unique case-insensitively within a pathway.
+/// - 12b (error): an optional arg (`required: false`) must carry a `default`.
+///   A `required: true` arg may carry a `default`; it passes silently — the
+///   default is unused, the caller must supply the value.
+/// - 12c (error): when the pathway declares args, every placeholder in step
+///   arg values must resolve to a declared arg.
+/// - 12d (warning): a declared arg whose placeholder appears in no step is a
+///   dead parameter. Args that failed 12f are skipped here — one diagnostic
+///   per defect, the most specific one.
+/// - 12e (warning): placeholder-shaped tokens in step values of a pathway
+///   that declares no args pass through verbatim (legacy/illustrative).
+/// - 12f (error): arg names must match the placeholder ident grammar
+///   `[A-Za-z0-9_][A-Za-z0-9_-]*` (uppercase deliberately allowed — `Key` is
+///   referenceable via case-insensitive resolution). 12b ensures every
+///   declared arg has a value; 12c ensures every placeholder has an arg; 12f
+///   ensures every arg can have a placeholder. Without it the bridge
+///   advertises an inputSchema demanding a value that structurally never
+///   reaches any step.
+fn validate_pathway_args(manifest: &Manifest, result: &mut ValidationResult) {
+    for (pi, pathway) in manifest.pathways.iter().enumerate() {
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut unreferenceable: HashSet<usize> = HashSet::new();
+        for (ai, arg) in pathway.args.iter().enumerate() {
+            if !is_placeholder_ident(&arg.name) {
+                unreferenceable.insert(ai);
+                result.errors.push(ValidationError {
+                    path: format!("pathways[{pi}].args[{ai}].name"),
+                    message: format!(
+                        "pathway \"{}\" arg \"{}\" cannot be referenced by any placeholder; \
+                         arg names must match [A-Za-z0-9_][A-Za-z0-9_-]*",
+                        pathway.name, arg.name
+                    ),
+                });
+            }
+
+            if !seen.insert(arg.name.to_ascii_lowercase()) {
+                result.errors.push(ValidationError {
+                    path: format!("pathways[{pi}].args[{ai}]"),
+                    message: format!(
+                        "pathway \"{}\" declares duplicate argument name \"{}\" (argument names \
+                         are matched case-insensitively)",
+                        pathway.name, arg.name
+                    ),
+                });
+            }
+
+            if !arg.required && arg.default.is_none() {
+                result.errors.push(ValidationError {
+                    path: format!("pathways[{pi}].args[{ai}]"),
+                    message: format!(
+                        "pathway \"{}\" argument \"{}\" is optional (required: false) but has no \
+                         default — placeholder substitution must be total",
+                        pathway.name, arg.name
+                    ),
+                });
+            }
+        }
+
+        let declared: HashSet<String> = pathway
+            .args
+            .iter()
+            .map(|a| a.name.to_ascii_lowercase())
+            .collect();
+        let mut used: HashSet<String> = HashSet::new();
+
+        for (si, step) in pathway.steps.iter().enumerate() {
+            for (ai, step_arg) in step.args.iter().enumerate() {
+                let value = match step_arg {
+                    PathwayArg::Positional { value, .. } => value.as_str(),
+                    PathwayArg::Flag {
+                        value: Some(value), ..
+                    } => value.as_str(),
+                    PathwayArg::Flag { value: None, .. } => continue,
+                };
+
+                for ident in placeholders(value) {
+                    if pathway.args.is_empty() {
+                        result.warnings.push(ValidationWarning {
+                            path: format!("pathways[{pi}].steps[{si}].args[{ai}]"),
+                            message: format!(
+                                "pathway \"{}\" declares no args but a step value contains the \
+                                 placeholder-shaped token \"<{ident}>\" — it will pass through \
+                                 verbatim",
+                                pathway.name
+                            ),
+                        });
+                    } else if declared.contains(&ident.to_ascii_lowercase()) {
+                        used.insert(ident.to_ascii_lowercase());
+                    } else {
+                        result.errors.push(ValidationError {
+                            path: format!("pathways[{pi}].steps[{si}].args[{ai}]"),
+                            message: format!(
+                                "pathway \"{}\" step value placeholder \"<{ident}>\" does not \
+                                 resolve to any declared pathway arg",
+                                pathway.name
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        for (ai, arg) in pathway.args.iter().enumerate() {
+            // An arg that failed 12f already drew the more specific
+            // "unreferenceable" error; reporting it dead too is noise.
+            if unreferenceable.contains(&ai) {
+                continue;
+            }
+            if !used.contains(&arg.name.to_ascii_lowercase()) {
+                result.warnings.push(ValidationWarning {
+                    path: format!("pathways[{pi}].args[{ai}]"),
+                    message: format!(
+                        "pathway \"{}\" argument \"{}\" placeholder appears in no step value — \
+                         dead parameter",
+                        pathway.name, arg.name
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// Returns `true` when `name` matches the placeholder ident grammar
+/// `[A-Za-z0-9_][A-Za-z0-9_-]*` — byte-identical to what [`placeholders`]
+/// extracts, so a matching arg name is always referenceable.
+fn is_placeholder_ident(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    match bytes.first() {
+        Some(&b) if b.is_ascii_alphanumeric() || b == b'_' => {}
+        _ => return false,
+    }
+    bytes[1..]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Rule 14: A pathway with zero steps provides no guidance.
+fn validate_pathway_has_steps(manifest: &Manifest, result: &mut ValidationResult) {
+    for (pi, pathway) in manifest.pathways.iter().enumerate() {
+        if pathway.steps.is_empty() {
+            result.warnings.push(ValidationWarning {
+                path: format!("pathways[{pi}].steps"),
+                message: format!("pathway \"{}\" has zero steps", pathway.name),
+            });
+        }
+    }
+}
+
+/// Yields each placeholder identifier in `value`, without the angle brackets.
+///
+/// A placeholder is a maximal substring `<ident>` where `ident` matches
+/// `[A-Za-z0-9_][A-Za-z0-9_-]*`. Anything else — `<>`, `<-x>`, an unclosed
+/// `<ident` — is not a placeholder and is skipped.
+fn placeholders(value: &str) -> impl Iterator<Item = &str> {
+    let bytes = value.as_bytes();
+    let mut idx = 0;
+
+    std::iter::from_fn(move || {
+        while idx < bytes.len() {
+            if bytes[idx] != b'<' {
+                idx += 1;
+                continue;
+            }
+
+            let start = idx + 1;
+            let mut end = start;
+            if end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric()
+                        || bytes[end] == b'_'
+                        || bytes[end] == b'-')
+                {
+                    end += 1;
+                }
+                if end < bytes.len() && bytes[end] == b'>' {
+                    idx = end + 1;
+                    return Some(&value[start..end]);
+                }
+            }
+
+            idx = start;
+        }
+        None
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -404,6 +639,15 @@ mod tests {
             pathways: vec![Pathway {
                 name: "read-write".to_string(),
                 description: "Read then write".to_string(),
+                args: vec![Arg {
+                    name: "key".to_string(),
+                    arg_type: "string".to_string(),
+                    required: true,
+                    description: "Key to read".to_string(),
+                    default: None,
+                    enum_values: None,
+                    constraints: None,
+                }],
                 prerequisites: vec!["get".to_string()],
                 steps: vec![
                     PathwayStep {
@@ -1127,5 +1371,423 @@ mod tests {
             "expected at least 3 errors, got {}: {result}",
             result.errors.len()
         );
+    }
+
+    // ── Rule 11: Duplicate pathway names ─────────────────────────────
+
+    #[test]
+    fn distinct_pathway_names_pass() {
+        let mut m = valid_manifest();
+        m.pathways.push(Pathway {
+            name: "write-only".to_string(),
+            description: "Just write".to_string(),
+            args: vec![],
+            prerequisites: vec![],
+            steps: vec![PathwayStep {
+                command: "set".to_string(),
+                args: vec![],
+                note: None,
+            }],
+        });
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    #[test]
+    fn duplicate_pathway_name_is_error() {
+        let mut m = valid_manifest();
+        m.pathways.push(Pathway {
+            name: "read-write".to_string(),
+            description: "Same name again".to_string(),
+            args: vec![],
+            prerequisites: vec![],
+            steps: vec![PathwayStep {
+                command: "set".to_string(),
+                args: vec![],
+                note: None,
+            }],
+        });
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[1].name")
+            .unwrap();
+        assert!(err.message.contains("duplicate pathway name"));
+        assert!(err.message.contains("read-write"));
+    }
+
+    // ── Rule 12a: Pathway arg names unique case-insensitively ───────
+
+    #[test]
+    fn pathway_args_with_distinct_names_pass() {
+        let mut m = valid_manifest();
+        m.pathways[0].args.push(Arg {
+            name: "count".to_string(),
+            arg_type: "integer".to_string(),
+            required: true,
+            description: "How many".to_string(),
+            default: None,
+            enum_values: None,
+            constraints: None,
+        });
+        // Use both placeholders so neither arg is a dead parameter.
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "<KEY>-<COUNT>".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    #[test]
+    fn pathway_arg_names_duplicate_case_insensitively_is_error() {
+        let mut m = valid_manifest();
+        // "key" is already declared; "KEY" differs only by case.
+        m.pathways[0].args.push(Arg {
+            name: "KEY".to_string(),
+            arg_type: "string".to_string(),
+            required: true,
+            description: "Case-colliding duplicate".to_string(),
+            default: None,
+            enum_values: None,
+            constraints: None,
+        });
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].args[1]")
+            .unwrap();
+        assert!(err.message.contains("duplicate argument name"));
+        assert!(err.message.contains("case-insensitively"));
+        assert!(err.message.contains("KEY"));
+    }
+
+    // ── Rule 12b: Optional pathway arg requires a default ───────────
+
+    #[test]
+    fn optional_pathway_arg_with_default_passes() {
+        let mut m = valid_manifest();
+        m.pathways[0].args[0].required = false;
+        m.pathways[0].args[0].default = Some(serde_json::json!("focus"));
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    #[test]
+    fn optional_pathway_arg_without_default_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].args[0].required = false;
+        m.pathways[0].args[0].default = None;
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].args[0]")
+            .unwrap();
+        assert!(err.message.contains("optional"));
+        assert!(err.message.contains("no default"));
+    }
+
+    #[test]
+    fn required_arg_with_default_passes_silently() {
+        // Pinned posture: required: true plus a default is accepted — the
+        // default is simply unused, the caller must supply the value.
+        let mut m = valid_manifest();
+        m.pathways[0].args[0].required = true;
+        m.pathways[0].args[0].default = Some(serde_json::json!("focus"));
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    // ── Rule 12f: Arg names must match the placeholder ident grammar ─
+
+    #[test]
+    fn uppercase_arg_name_is_referenceable_and_valid() {
+        let mut m = valid_manifest();
+        // The fixture step value "<KEY>" resolves to the uppercase name
+        // case-insensitively; uppercase is deliberately allowed.
+        m.pathways[0].args[0].name = "KEY".to_string();
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    #[test]
+    fn non_ascii_arg_name_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].args[0].name = "clé".to_string();
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "literal".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].args[0].name")
+            .unwrap();
+        assert!(err.message.contains("clé"));
+        assert!(err.message.contains("cannot be referenced"));
+        assert!(err.message.contains("[A-Za-z0-9_][A-Za-z0-9_-]*"));
+    }
+
+    #[test]
+    fn arg_name_with_space_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].args[0].name = "my key".to_string();
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "literal".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].args[0].name")
+            .unwrap();
+        assert!(err.message.contains("my key"));
+        assert!(err.message.contains("[A-Za-z0-9_][A-Za-z0-9_-]*"));
+    }
+
+    #[test]
+    fn unreferenceable_arg_suppresses_12d_but_valid_unused_arg_still_warns() {
+        let mut m = valid_manifest();
+        // "clé" fails 12f (the more specific diagnostic — no 12d on top);
+        // "orphan" is charset-valid and unused, so 12d still fires for it.
+        m.pathways[0].args = vec![
+            Arg {
+                name: "clé".to_string(),
+                arg_type: "string".to_string(),
+                required: true,
+                description: "Unreferenceable".to_string(),
+                default: None,
+                enum_values: None,
+                constraints: None,
+            },
+            Arg {
+                name: "orphan".to_string(),
+                arg_type: "string".to_string(),
+                required: true,
+                description: "Valid but unused".to_string(),
+                default: None,
+                enum_values: None,
+                constraints: None,
+            },
+        ];
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "literal".to_string(),
+        }];
+        let result = validate(&m);
+        assert_eq!(result.errors.len(), 1, "only the 12f error: {result}");
+        assert_eq!(result.errors[0].path, "pathways[0].args[0].name");
+        assert_eq!(result.warnings.len(), 1, "only orphan's 12d: {result}");
+        assert_eq!(result.warnings[0].path, "pathways[0].args[1]");
+        assert!(result.warnings[0].message.contains("orphan"));
+        assert!(
+            !result.warnings.iter().any(|w| w.message.contains("clé")),
+            "12f-failing arg must not also be reported dead: {result}"
+        );
+    }
+
+    // ── Rule 12c: Placeholders must resolve to declared args ────────
+
+    #[test]
+    fn placeholder_resolves_case_insensitively() {
+        let mut m = valid_manifest();
+        // The declared arg is "key"; the fixture already uses "<KEY>". Flip
+        // the placeholder to lowercase to cover the other direction.
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "<key>".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert!(!result.has_warnings(), "expected no warnings: {result}");
+    }
+
+    #[test]
+    fn ghost_placeholder_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].steps[0].args = vec![PathwayArg::Positional {
+            name: "key".to_string(),
+            value: "<GHOST>".to_string(),
+        }];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].steps[0].args[0]")
+            .unwrap();
+        assert!(err.message.contains("<GHOST>"));
+        assert!(err.message.contains("does not resolve"));
+    }
+
+    #[test]
+    fn ghost_placeholder_in_flag_value_is_error() {
+        let mut m = valid_manifest();
+        m.pathways[0].steps[0].args = vec![
+            PathwayArg::Positional {
+                name: "key".to_string(),
+                value: "<KEY>".to_string(),
+            },
+            PathwayArg::Flag {
+                name: "--json".to_string(),
+                value: Some("<GHOST>".to_string()),
+            },
+        ];
+        let result = validate(&m);
+        assert!(!result.is_valid());
+        let err = result
+            .errors
+            .iter()
+            .find(|e| e.path == "pathways[0].steps[0].args[1]")
+            .unwrap();
+        assert!(err.message.contains("<GHOST>"));
+    }
+
+    // ── Rule 12d: Dead pathway parameter ─────────────────────────────
+
+    #[test]
+    fn declared_arg_unused_in_any_step_is_warning() {
+        let mut m = valid_manifest();
+        m.pathways[0].args.push(Arg {
+            name: "orphan".to_string(),
+            arg_type: "string".to_string(),
+            required: true,
+            description: "Never referenced".to_string(),
+            default: None,
+            enum_values: None,
+            constraints: None,
+        });
+        let result = validate(&m);
+        assert!(result.is_valid(), "should still be valid (warnings only)");
+        let warn = result
+            .warnings
+            .iter()
+            .find(|w| w.path == "pathways[0].args[1]")
+            .unwrap();
+        assert!(warn.message.contains("orphan"));
+        assert!(warn.message.contains("appears in no step"));
+    }
+
+    // ── Rule 12e: Placeholder tokens without declared args ──────────
+
+    #[test]
+    fn legacy_manifest_with_placeholder_tokens_and_no_args_warns_only() {
+        let mut m = valid_manifest();
+        // Legacy shape: step values carry "<KEY>" but the pathway declares
+        // no args. Must stay valid with exactly the 12e warning.
+        m.pathways[0].args = vec![];
+        let result = validate(&m);
+        assert!(result.is_valid(), "expected no errors, got: {result}");
+        assert_eq!(
+            result.warnings.len(),
+            1,
+            "expected only the rule-12e warning, got: {result}"
+        );
+        let warn = &result.warnings[0];
+        assert_eq!(warn.path, "pathways[0].steps[0].args[0]");
+        assert!(warn.message.contains("declares no args"));
+        assert!(warn.message.contains("<KEY>"));
+    }
+
+    // ── Rule 13: Pathway name charset ────────────────────────────────
+
+    #[test]
+    fn well_formed_pathway_name_no_warning() {
+        let mut m = valid_manifest();
+        m.pathways[0].name = "Check_state-2".to_string();
+        let result = validate(&m);
+        assert!(!result.has_warnings(), "unexpected warning: {result}");
+    }
+
+    #[test]
+    fn malformed_pathway_name_is_warning() {
+        let mut m = valid_manifest();
+        m.pathways[0].name = "bad name!".to_string();
+        let result = validate(&m);
+        assert!(result.is_valid(), "should still be valid (warnings only)");
+        let warn = result
+            .warnings
+            .iter()
+            .find(|w| w.path == "pathways[0].name")
+            .unwrap();
+        assert!(warn.message.contains("does not match"));
+        assert!(warn.message.contains("bad name!"));
+    }
+
+    #[test]
+    fn pathway_name_starting_with_separator_is_warning() {
+        let mut m = valid_manifest();
+        m.pathways[0].name = "-leading-dash".to_string();
+        let result = validate(&m);
+        assert!(result.is_valid());
+        assert!(
+            result.warnings.iter().any(|w| w.path == "pathways[0].name"),
+            "leading '-' must trip the charset warning: {result}"
+        );
+    }
+
+    // ── Rule 14: Pathway with zero steps ─────────────────────────────
+
+    #[test]
+    fn pathway_with_steps_no_warning() {
+        let result = validate(&valid_manifest());
+        assert!(!result.has_warnings(), "unexpected warning: {result}");
+    }
+
+    #[test]
+    fn pathway_with_zero_steps_is_warning() {
+        let mut m = valid_manifest();
+        m.pathways.push(Pathway {
+            name: "noop".to_string(),
+            description: "Does nothing".to_string(),
+            args: vec![],
+            prerequisites: vec![],
+            steps: vec![],
+        });
+        let result = validate(&m);
+        assert!(result.is_valid(), "should still be valid (warnings only)");
+        let warn = result
+            .warnings
+            .iter()
+            .find(|w| w.path == "pathways[1].steps")
+            .unwrap();
+        assert!(warn.message.contains("zero steps"));
+        assert!(warn.message.contains("noop"));
+    }
+
+    // ── Placeholder extraction helper ────────────────────────────────
+
+    #[test]
+    fn placeholders_extracts_maximal_idents() {
+        let found: Vec<&str> =
+            placeholders("<KEY> mid <a-b_2> <-bad> <> <unclosed and <<NESTED>>").collect();
+        assert_eq!(found, vec!["KEY", "a-b_2", "NESTED"]);
+
+        // Multibyte text around a placeholder does not disturb extraction;
+        // multibyte inside the ident candidate disqualifies it.
+        assert_eq!(placeholders("日本<KEY>語").collect::<Vec<_>>(), vec!["KEY"]);
+        assert_eq!(placeholders("<ké>").count(), 0);
+    }
+
+    #[test]
+    fn placeholders_empty_and_plain_strings_yield_nothing() {
+        assert_eq!(placeholders("").count(), 0);
+        assert_eq!(placeholders("no tokens here").count(), 0);
+        assert_eq!(placeholders("a < b > c").count(), 0);
     }
 }
