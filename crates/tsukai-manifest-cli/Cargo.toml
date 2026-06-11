@@ -1,6 +1,6 @@
 [package]
 name = "tsukai-manifest-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "CLI for the tsukai manifest format — validate, project (Tier 0/1/2), and generate the JSON schema."
 keywords = ["manifest", "cli", "codegen", "config", "tsukai"]
 categories = ["command-line-utilities", "development-tools"]
